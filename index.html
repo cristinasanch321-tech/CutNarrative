@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>CutNarrative</title>
+<style>
+    body { font-family: system-ui, -apple-system, sans-serif; background: #14201c; color: #fff; padding: 14px; margin: 0; font-size: 11px; }
+    h3 { color: #1abc9c; text-align: center; font-size: 15px; margin: 0 0 8px; }
+    .tabs { display: flex; gap: 6px; margin-bottom: 10px; }
+    .tab { flex: 1; text-align: center; padding: 9px 2px; background: #1e2b27; border: 1px solid #2f4038; border-radius: 8px; cursor: pointer; font-weight: bold; color: #7d9a8e; font-size: 10px; }
+    .tab.on { background: #16a085; color: #fff; border-color: #16a085; }
+    .card { background: #1e2b27; border: 1px solid #2f4038; border-radius: 8px; padding: 10px; margin-bottom: 10px; }
+    label { display: block; font-weight: bold; margin-bottom: 4px; color: #8fa89e; font-size: 10px; text-transform: uppercase; }
+    input[type="text"], textarea { width: 100%; background: #101714; color: #fff; border: 1px solid #3a4a42; padding: 6px; border-radius: 4px; box-sizing: border-box; font-size: 11px; margin-bottom: 6px; }
+    textarea { font-family: Menlo, Monaco, monospace; white-space: pre; min-height: 170px; resize: vertical; line-height: 1.5; }
+    button { width: 100%; padding: 10px; background: #16a085; color: #fff; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; margin-top: 8px; font-size: 12px; }
+    button:hover { background: #12876f; }
+    button.sec { background: #3a4a42; }
+    button.sec:hover { background: #2e3b34; }
+    button.go { background: #c0392b; }
+    button.go:hover { background: #a93226; }
+    button.mk { background: #8e44ad; }
+    button.mk:hover { background: #7d3c98; }
+    .mini { display: flex; gap: 6px; margin-top: 6px; }
+    .mini button { padding: 7px; font-size: 11px; margin-top: 0; }
+    .chk { display: flex; align-items: center; gap: 6px; color: #ccc; margin: 4px 0; }
+    .chk input { width: auto; }
+    .validate { white-space: pre-wrap; font-size: 10px; color: #bbb; max-height: 230px; overflow-y: auto; word-break: break-word; }
+    details { margin-top: 6px; color: #9aa; font-size: 10px; }
+    summary { cursor: pointer; color: #1abc9c; }
+    pre { background: #101714; padding: 8px; border-radius: 6px; overflow-x: auto; margin: 6px 0; }
+    #status { margin-top: 8px; font-size: 10px; color: #9aa; white-space: pre-wrap; word-break: break-word; max-height: 140px; overflow-y: auto; }
+    .row2 { display: flex; gap: 8px; align-items: end; }
+    .row2 > div { flex: 1; }
+</style>
+</head>
+<body>
+    <h3>CutNarrative</h3>
+
+    <div class="tabs">
+        <div class="tab on" id="tabMulti">🖥 Multicámara</div>
+        <div class="tab" id="tabCaps">✂️ Extraer y unir</div>
+        <div class="tab" id="tabBuild">🎬 Construir cápsula</div>
+    </div>
+
+    <div class="card">
+        <div id="status">Panel cargando...</div>
+        <button class="sec" id="btnProbe">🔍 DIAGNÓSTICO PREMIERE</button>
+    </div>
+
+    <!-- ============ MULTICAM (de Multicam por Transcripción, tal cual) ============ -->
+    <section id="secMulti">
+        <div class="card">
+            <label>Plan de tramos (inicio - fin  pista  # comentario opcional)</label>
+            <textarea id="planMulti" spellcheck="false" placeholder="# montaje
+0:00 - 0:12    V3      # respiro
+0:12 - 1:05    V1      # entra el entrevistado
+1:05 - 1:40    V2
+
+@markers
+0:35   posible error: palabra cortada"></textarea>
+            <details>
+                <summary>Formato</summary>
+                <pre># tramos:  inicio - fin  pista  # nota
+0:00 - 0:12   V3      # respiro
+0:12 - 1:05   V1
+1:05 - 1:40   NONE    (vacía todas)
+
+@markers
+0:35   comentario del marker</pre>
+                Tiempos: MM:SS, HH:MM:SS, SMPTE HH:MM:SS:FF o segundos. Huecos = sin tocar.<br>
+                Comentarios tras la pista: informativos, NO crean markers.<br>
+                Markers: SOLO del bloque @markers. Tramos contiguos recomendados.
+            </details>
+            <button id="btnValidate">1 · VALIDAR PLAN</button>
+            <div class="validate" id="validateMulti"></div>
+        </div>
+
+        <div class="card">
+            <div class="chk"><input type="checkbox" id="cloneBefore" checked> Clonar secuencia antes de aplicar (copia de seguridad)</div>
+            <button class="go" id="btnApply">2 · ✂️ APLICAR PLAN + MARKERS (sin cambiar duración)</button>
+            <div class="mini">
+                <button class="sec" id="btnPrevCut">⏮ corte</button>
+                <button class="sec" id="btnNextCut">corte ⏭</button>
+                <button class="mk" id="btnPrevMk">⏮ marker</button>
+                <button class="mk" id="btnNextMk">marker ⏭</button>
+            </div>
+        </div>
+    </section>
+
+    <!-- ============ EXTRAER Y UNIR ============ -->
+    <section id="secCaps" style="display:none">
+        <div class="card">
+            <label>Tabla de tramos a MANTENER (IN / OUT + nota)</label>
+            <textarea id="planCaps" spellcheck="false" placeholder="IN           OUT         CONTENIDO / NOTA
+01:35:30:18  01:35:43:00  Pues para mí recibir... · REVISAR"></textarea>
+            <label style="margin-top:6px;">TC de inicio de la secuencia (vacío = 00:00:00:00)</label>
+            <input type="text" id="tcBase" placeholder="solo si tu secuencia NO empieza en cero">
+            <details>
+                <summary>Qué hace</summary>
+                Sobre la secuencia ACTIVA montada: corta en cada IN/OUT (todas las pistas),
+                <b>mantiene solo los tramos listados</b> y une el resto (compacta, sin huecos).
+                <b>Un marker al inicio de cada tramo</b> con su nota. Orden final: cronológico.
+                SIEMPRE clona primero. Pre-check: si algo no cuadra, no borra nada.
+            </details>
+            <button id="btnValidateCaps">1 · VALIDAR TRAMOS</button>
+            <div class="validate" id="validateCaps"></div>
+        </div>
+        <div class="card">
+            <button class="go" id="btnApplyCaps">2 · ✂️ EXTRAER Y UNIR (clona siempre · marker por tramo)</button>
+            <div class="mini">
+                <button class="mk" id="btnPrevMkC">⏮ marker</button>
+                <button class="mk" id="btnNextMkC">marker ⏭</button>
+            </div>
+        </div>
+    </section>
+
+    <!-- ============ CONSTRUIR CAPSULA ============ -->
+    <section id="secBuild" style="display:none">
+        <div class="card">
+            <label>Tabla de tramos EN EL ORDEN QUE QUIERAS (IN / OUT + nota)</label>
+            <textarea id="planBuild" spellcheck="false" placeholder="IN           OUT         CONTENIDO / NOTA
+01:35:30:18  01:35:43:00  Pues para mí recibir...
+01:36:57:05  01:37:00:18  Dedico este premio..."></textarea>
+            <label style="margin-top:6px;">TC de inicio de la secuencia (vacío = 00:00:00:00)</label>
+            <input type="text" id="tcBaseB" placeholder="solo si tu secuencia NO empieza en cero">
+            <details>
+                <summary>Qué hace</summary>
+                Crea una secuencia <b>NUEVA</b> ("Cápsula ...") y coloca tus tramos
+                <b>en el orden de esta lista</b> (aunque no sea cronológico), cada uno con su
+                marker. No toca ninguna secuencia existente. Material: los clips de V1
+                de la secuencia activa.
+            </details>
+            <button id="btnValidateBuild">1 · VALIDAR</button>
+            <div class="validate" id="validateBuild"></div>
+        </div>
+        <div class="card">
+            <button class="go" id="btnApplyBuild">2 · 🎬 CONSTRUIR CÁPSULA (secuencia nueva, orden de lista)</button>
+            <div class="mini">
+                <button class="mk" id="btnPrevMkB">⏮ marker</button>
+                <button class="mk" id="btnNextMkB">marker ⏭</button>
+            </div>
+        </div>
+    </section>
+
+    <div class="card">
+        <label>Guardar / cargar plan (de la pestaña activa)</label>
+        <div class="row2">
+            <div><input type="text" id="planName" value="mi-montaje"></div>
+            <div><button class="sec" id="btnSave" style="margin-top:0;">💾 Guardar</button></div>
+            <div><button class="sec" id="btnLoad" style="margin-top:0;">📂 Cargar</button></div>
+        </div>
+    </div>
+
+    <script src="./js/CSInterface.js"></script>
+    <script>
+        const csInterface = new CSInterface();
+        const fs = require('fs');
+        const os = require('os');
+        const path = require('path');
+        const statusEl = document.getElementById('status');
+
+        window.onerror = function(msg, src, line) {
+            statusEl.innerText = '⚠️ Error interno del panel: ' + msg + ' (línea ' + line + ')';
+        };
+
+        let MODE = 'multi';
+        let SEQ_FPS = 25, SEQ_END = -1, SEQ_VT = 0;
+        let cutsList = [], cutIdx = -1;
+        let mksList = [], mkIdx = -1;
+        let validatedMulti = null, validatedCaps = null, validatedBuild = null;
+
+        function extDir() {
+            try { return csInterface.getSystemPath(SystemPath.EXTENSION); }
+            catch (e) { return path.join(os.homedir(), 'Library/Application Support/Adobe/CEP/extensions/CutNarrative'); }
+        }
+
+        function setMode(m) {
+            MODE = m;
+            document.getElementById('tabMulti').classList.toggle('on', m === 'multi');
+            document.getElementById('tabCaps').classList.toggle('on', m === 'caps');
+            document.getElementById('tabBuild').classList.toggle('on', m === 'build');
+            document.getElementById('secMulti').style.display = (m === 'multi') ? '' : 'none';
+            document.getElementById('secCaps').style.display = (m === 'caps') ? '' : 'none';
+            document.getElementById('secBuild').style.display = (m === 'build') ? '' : 'none';
+        }
+        document.getElementById('tabMulti').addEventListener('click', () => setMode('multi'));
+        document.getElementById('tabCaps').addEventListener('click', () => setMode('caps'));
+        document.getElementById('tabBuild').addEventListener('click', () => setMode('build'));
+
+        function refreshProbe(cb) {
+            csInterface.evalScript('CN_probe()', (res) => {
+                let r = null;
+                try { r = JSON.parse(res); } catch (e) {}
+                if (r && r.ok) {
+                    SEQ_FPS = r.fps || 25;
+                    SEQ_END = (typeof r.seqEnd === 'number') ? r.seqEnd : -1;
+                    SEQ_VT = r.videoTracks || 0;
+                }
+                if (cb) cb(r);
+            });
+        }
+
+        csInterface.evalScript('CN_ping()', (res) => {
+            try {
+                const r = JSON.parse(res);
+                statusEl.innerText = r.ok ? `Secuencia activa: "${r.seq}" · ${r.videoTracks}V / ${r.audioTracks}A`
+                                          : `Premiere: ${r.error}`;
+            } catch (e) { statusEl.innerText = 'JSX no cargado. Reinicia Premiere. Respuesta: ' + res; }
+        });
+        refreshProbe();
+
+        document.getElementById('btnProbe').addEventListener('click', () => {
+            refreshProbe((r) => {
+                if (!r || !r.ok) { statusEl.innerText = 'ERROR: ' + (r ? r.error : 'sin respuesta'); return; }
+                const lines = [`"${r.seq}" · ${r.fps} fps · inicio ${r.zeroSec}s · fin ${r.seqEnd}s`];
+                r.tracks.forEach((t, i) => lines.push(`V${i + 1}: ${t.clips} clips` + (t.rango ? ` [${t.rango}]` : ' (VACÍA)')));
+                statusEl.innerText = lines.join('\n');
+            });
+        });
+
+        function parseTime(tok) {
+            tok = tok.trim();
+            if (tok.includes(':')) {
+                const p = tok.split(':').map(Number);
+                if (p.some(isNaN)) return NaN;
+                if (p.length === 2) return p[0] * 60 + p[1];
+                if (p.length === 3) return p[0] * 3600 + p[1] * 60 + p[2];
+                if (p.length === 4) return p[0] * 3600 + p[1] * 60 + p[2] + p[3] / (SEQ_FPS || 25);
+                return NaN;
+            }
+            const v = parseFloat(tok);
+            return isNaN(v) ? NaN : v;
+        }
+
+        function fmt(t) {
+            const s = Math.floor(t % 60), m = Math.floor(t / 60) % 60, h = Math.floor(t / 3600);
+            return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(s).padStart(2, '0');
+        }
+
+        /* ================= MULTICAM (parser v1.4 con comentarios inline) ================= */
+        function parseMulti(text) {
+            const segs = [], mks = [], errors = [], warns = [];
+            let inMarkers = false;
+            text.split(/\r?\n/).forEach((raw, idx) => {
+                let line = raw.trim();
+                if (!line || line.startsWith('#') || line.startsWith('//')) return;
+                if (/^@markers/i.test(line)) { inMarkers = true; return; }
+                if (inMarkers) {
+                    const mm = line.match(/^(\S+)\s+(.+)$/);
+                    if (!mm) { errors.push(`L${idx + 1}: marker no válido "${raw}"`); return; }
+                    const t = parseTime(mm[1]);
+                    if (isNaN(t)) { errors.push(`L${idx + 1}: tiempo de marker inválido "${raw}"`); return; }
+                    mks.push({ t: t, comment: mm[2].trim(), line: idx + 1 });
+                    return;
+                }
+                let norm = line.replace(/[–—→]/g, ' - ');
+                const tokens = norm.split(/\s+/).filter(Boolean);
+                if (tokens.length && tokens[0].includes('-') && isNaN(parseTime(tokens[0]))) {
+                    const parts = tokens[0].split('-');
+                    if (parts.length === 2 && !isNaN(parseTime(parts[0])) && !isNaN(parseTime(parts[1])))
+                        tokens.splice(0, 1, parts[0], '-', parts[1]);
+                }
+                if (tokens.length < 3) { errors.push(`L${idx + 1}: no entiendo "${raw}" — formato: inicio-fin V# [comentario]`); return; }
+                const s = parseTime(tokens[0]);
+                let e, pistaIdx;
+                if (tokens[1] === '-') { e = parseTime(tokens[2]); pistaIdx = 3; }
+                else { e = parseTime(tokens[1]); pistaIdx = 2; }
+                if (isNaN(s) || isNaN(e) || e <= s) { errors.push(`L${idx + 1}: tiempos inválidos "${raw}"`); return; }
+                const tk = (tokens[pistaIdx] || '').toUpperCase();
+                const inlineNote = tokens.slice(pistaIdx + 1).join(' ').replace(/^#+\s*/, '');
+                let t = 0;
+                if (/^(NONE|NINGUNO|VACIO|V0)$/.test(tk)) { t = 0; }
+                else {
+                    const mv = tk.match(/^V(\d+)$/);
+                    if (!mv) { errors.push(`L${idx + 1}: pista "${tokens[pistaIdx]}" no válida — usa V1, V2... o NONE`); return; }
+                    t = parseInt(mv[1], 10);
+                    if (t < 1) { errors.push(`L${idx + 1}: V0 no existe (usa NONE)`); return; }
+                }
+                segs.push({ s: s, e: e, t: t, line: idx + 1, note: inlineNote });
+            });
+            segs.sort((a, b) => a.s - b.s);
+            for (let i = 1; i < segs.length; i++)
+                if (segs[i].s < segs[i - 1].e) warns.push(`⚠️ L${segs[i].line}: solapa con el tramo anterior.`);
+            mks.sort((a, b) => a.t - b.t);
+            return { segs, mks, errors, warns };
+        }
+
+        document.getElementById('btnValidate').addEventListener('click', () => {
+            const text = document.getElementById('planMulti').value;
+            if (!text.trim()) { document.getElementById('validateMulti').innerText = 'Plan vacío.'; validatedMulti = null; return; }
+            refreshProbe();
+            const r = parseMulti(text);
+            const blocked = r.errors.length || r.warns.length;
+            validatedMulti = blocked ? null : r;
+            cutsList = r.segs.filter(sg => sg.s > 0).map(sg => sg.s);
+            mksList = r.mks.map(x => x.t);
+            cutIdx = -1; mkIdx = -1;
+            const out = [];
+            if (r.errors.length) out.push('ERRORES:', ...r.errors.map(e => '✗ ' + e));
+            if (r.warns.length) out.push(...r.warns);
+            if (!blocked) {
+                out.push(`✓ ${r.segs.length} tramos · ${cutsList.length} cortes · ${r.mks.length} markers`);
+                r.segs.slice(0, 12).forEach(sg =>
+                    out.push(`${fmt(sg.s)} → ${fmt(sg.e)}  ·  ${sg.t ? 'V' + sg.t : 'NONE (vacío)'}` +
+                             (sg.note ? `   # ${sg.note.slice(0, 40)}` : '')));
+                if (r.segs.length > 12) out.push(`... y ${r.segs.length - 12} más`);
+                if (r.mks.length) {
+                    out.push('', '── Markers ──');
+                    r.mks.slice(0, 12).forEach(x => out.push(`⚠ ${fmt(x.t)}  ${x.comment}`));
+                }
+                out.push('', 'Listo para aplicar.');
+            } else if (!r.errors.length) {
+                out.push('No se puede aplicar con solapes.');
+            }
+            document.getElementById('validateMulti').innerText = out.join('\n');
+        });
+
+        document.getElementById('btnApply').addEventListener('click', () => {
+            if (!validatedMulti) { document.getElementById('validateMulti').innerText = 'Valida primero.'; return; }
+            const segs = validatedMulti.segs, mks = validatedMulti.mks;
+            if (!segs.length && !mks.length) return;
+            const cuts = [];
+            const seen = {};
+            segs.forEach(sg => { [sg.s, sg.e].forEach(t => {
+                const k = Math.round(t * 25);
+                if (t > 0 && !seen[k]) { seen[k] = 1; cuts.push(t); }
+            }); });
+            cuts.sort((a, b) => a - b);
+            const maxT = Math.max(...segs.map(sg => sg.t), 1);
+            const tmpPath = os.tmpdir() + '/cutnarrative_batch.json';
+            fs.writeFileSync(tmpPath, JSON.stringify({ tracks: maxT, cuts: cuts, segments: segs }));
+            const applyMarkers = () => {
+                if (!mks.length) return;
+                const payload = { markers: mks.map(x => ({ t: x.t, name: x.comment.slice(0, 60), comment: x.comment })) };
+                csInterface.evalScript('CN_addMarkers(' + JSON.stringify(JSON.stringify(payload)) + ')', (res) => {
+                    try { const r = JSON.parse(res);
+                        if (r.ok) statusEl.innerText += '\n⚠ Markers creados: ' + r.created;
+                    } catch (e) {}
+                });
+            };
+            const go = () => {
+                csInterface.evalScript('CN_execute_file(' + JSON.stringify(tmpPath) + ')', (res) => {
+                    let r = null; try { r = JSON.parse(res); } catch (e) {}
+                    if (r && r.ok) {
+                        let msg = segs.length ? `OK · Cortes: ${r.cuts} · Trozos vaciados: ${r.applied}` : 'Sin tramos.';
+                        if (segs.length && typeof r.dur0 === 'number' && typeof r.dur1 === 'number')
+                            msg += `\nDuración: ${r.dur0}s → ${r.dur1}s ${Math.abs(r.dur0 - r.dur1) < 0.5 ? '✓ intacta' : '⚠️ ¡CAMBIÓ!'}`;
+                        if (r.errorCount) msg += '\n' + r.errors.slice(0, 3).join('\n');
+                        statusEl.innerText = msg;
+                        applyMarkers();
+                    } else statusEl.innerText = 'Premiere NO aplicó:\n' + res;
+                });
+            };
+            if (document.getElementById('cloneBefore').checked) {
+                statusEl.innerText = 'Clonando secuencia...';
+                csInterface.evalScript('CN_cloneSeq()', (r) => {
+                    let rr = null; try { rr = JSON.parse(r); } catch (e) {}
+                    if (rr && rr.ok) { statusEl.innerText = `Clon lista: "${rr.name}"`; setTimeout(go, 300); }
+                    else statusEl.innerText = 'No se pudo clonar: ' + (rr ? rr.error : r);
+                });
+            } else go();
+        });
+
+        /* ================= EXTRAER Y UNIR ================= */
+        function parseRangeTable(text, baseSec) {
+            const rows = [], errors = [], warns = [], ignored = [];
+            text.split(/\r?\n/).forEach((raw, idx) => {
+                const line = raw.trim();
+                if (!line || line.startsWith('#') || line.startsWith('//')) return;
+                const tokens = line.split(/\s+/);
+                const times = [];
+                let i = 0;
+                while (i < tokens.length && /^[\d:.]+$/.test(tokens[i])) {
+                    const v = parseTime(tokens[i]);
+                    if (isNaN(v)) break;
+                    times.push(v); i++;
+                }
+                if (times.length < 2) {
+                    if (/[a-zA-ZÁÉÍÓÚáéíóúñÑ]/.test(line)) ignored.push(`L${idx + 1}`);
+                    return;
+                }
+                let ins = times[0], out = times[1];
+                if (baseSec) { ins -= baseSec; out -= baseSec; }
+                if (out <= ins) { errors.push(`L${idx + 1}: OUT <= IN`); return; }
+                if (ins < 0) { errors.push(`L${idx + 1}: TC base deja IN en negativo`); return; }
+                rows.push({ s: Math.round(ins * 1000) / 1000, e: Math.round(out * 1000) / 1000, note: tokens.slice(i).join(' ').replace(/^·\s*/, ''), line: idx + 1 });
+            });
+            return { rows, errors, warns, ignored };
+        }
+
+        document.getElementById('btnValidateCaps').addEventListener('click', () => {
+            const text = document.getElementById('planCaps').value;
+            if (!text.trim()) { document.getElementById('validateCaps').innerText = 'Tabla vacía.'; validatedCaps = null; return; }
+            refreshProbe((pr) => {
+                if (!pr || !pr.ok) { document.getElementById('validateCaps').innerText = '✗ No puedo leer la secuencia.'; validatedCaps = null; return; }
+                if (SEQ_END <= 0) { document.getElementById('validateCaps').innerText = '✗ Duración de secuencia desconocida. No se permite extraer.'; validatedCaps = null; return; }
+                const baseTok = document.getElementById('tcBase').value.trim();
+                let baseSec = 0;
+                if (baseTok) { baseSec = parseTime(baseTok); if (isNaN(baseSec)) { document.getElementById('validateCaps').innerText = '✗ TC base inválido'; validatedCaps = null; return; } }
+                const r = parseRangeTable(text, baseSec);
+                let overEnd = false;
+                if (SEQ_END > 0) for (const row of r.rows) if (row.e > SEQ_END + 0.02) overEnd = true;
+                const blocked = r.errors.length || overEnd;
+                validatedCaps = blocked ? null : r;
+                mksList = []; mkIdx = -1;
+                const out = [];
+                if (r.errors.length) out.push('ERRORES:', ...r.errors.map(e => '✗ ' + e));
+                if (overEnd) out.push('✗ Hay tramos más allá del final (' + fmt(SEQ_END) + '). Revisa el TC base.');
+                if (!blocked) {
+                    let total = 0;
+                    out.push(`✓ ${r.rows.length} tramos a MANTENER (fps ${SEQ_FPS}) — orden cronológico:`);
+                    r.rows.forEach((row, i) => {
+                        out.push(`${i + 1}. dur ${(row.e - row.s).toFixed(2)}s` + (row.note ? `  ⚠ "${row.note.slice(0, 45)}"` : ''));
+                        total += row.e - row.s;
+                    });
+                    mksList = [];
+                    let acc = 0;
+                    r.rows.forEach(row => { mksList.push(acc); acc += row.e - row.s; });
+                    out.push('', `Duración final: ${fmt(total)} (ahora: ${fmt(SEQ_END)}).`, 'Los tramos se mantienen en orden de TIMELINE.');
+                }
+                document.getElementById('validateCaps').innerText = out.join('\n');
+            });
+        });
+
+        document.getElementById('btnApplyCaps').addEventListener('click', () => {
+            if (!validatedCaps) { document.getElementById('validateCaps').innerText = 'Valida primero.'; return; }
+            const rows = validatedCaps.rows;
+            if (!rows.length) return;
+            statusEl.innerText = 'Clonando secuencia (el original NUNCA se toca)...';
+            csInterface.evalScript('CN_cloneSeq()', (r) => {
+                let rr = null; try { rr = JSON.parse(r); } catch (e) {}
+                if (!rr || !rr.ok) { statusEl.innerText = 'No se pudo clonar: ' + (rr ? rr.error : r); return; }
+                if (String(rr.name).indexOf('[NARRADO]') === -1 && String(rr.name).indexOf('[CUTNARRATIVE]') === -1) {
+                    statusEl.innerText = '⚠️ La activa no es la copia. NADA aplicado.'; return;
+                }
+                statusEl.innerText = `Copia lista: "${rr.name}". Extrayendo...`;
+                const payload = { ranges: rows.map(x => ({ s: x.s, e: x.e, note: x.note })) };
+                setTimeout(() => {
+                    csInterface.evalScript('CN_extract(' + JSON.stringify(JSON.stringify(payload)) + ')', (res) => {
+                        let r2 = null; try { r2 = JSON.parse(res); } catch (e) {}
+                        if (r2 && r2.ok) {
+                            mksList = r2.positions.map(p => p.at); mkIdx = -1;
+                            let msg = `OK · Tramos: ${r2.kept} · Borrados: ${r2.removed} · Markers: ${r2.markers}` +
+                                `\nDuración: ${r2.dur0}s → ${r2.dur1}s (esperados ${r2.totalKept}s)` +
+                                (Math.abs((r2.dur1 || 0) - r2.totalKept) < 0.5 ? ' ✓' : ' ⚠️');
+                            if (r2.errorCount) msg += '\n' + r2.errors.slice(0, 3).join('\n');
+                            statusEl.innerText = msg;
+                        } else statusEl.innerText = 'No se extrajo:\n' + (r2 ? r2.errors.join('\n') : res);
+                    });
+                }, 400);
+            });
+        });
+
+        /* ================= CONSTRUIR CAPSULA ================= */
+        document.getElementById('btnValidateBuild').addEventListener('click', () => {
+            const text = document.getElementById('planBuild').value;
+            if (!text.trim()) { document.getElementById('validateBuild').innerText = 'Tabla vacía.'; validatedBuild = null; return; }
+            refreshProbe((pr) => {
+                if (!pr || !pr.ok) { document.getElementById('validateBuild').innerText = '✗ No puedo leer la secuencia activa (material en V1).'; validatedBuild = null; return; }
+                const baseTok = document.getElementById('tcBaseB').value.trim();
+                let baseSec = 0;
+                if (baseTok) { baseSec = parseTime(baseTok); if (isNaN(baseSec)) { document.getElementById('validateBuild').innerText = '✗ TC base inválido'; validatedBuild = null; return; } }
+                const r = parseRangeTable(text, baseSec);
+                validatedBuild = r.errors.length ? null : r;
+                const out = [];
+                if (r.errors.length) out.push('ERRORES:', ...r.errors.map(e => '✗ ' + e));
+                if (!r.errors.length) {
+                    let total = 0;
+                    out.push(`✓ ${r.rows.length} tramos — en ESTE orden (el de la lista):`);
+                    r.rows.forEach((row, i) => {
+                        out.push(`${i + 1}. dur ${(row.e - row.s).toFixed(2)}s` + (row.note ? `  ⚠ "${row.note.slice(0, 42)}"` : ''));
+                        total += row.e - row.s;
+                    });
+                    out.push('', `TOTAL cápsula: ${fmt(total)}`, 'Se creará una secuencia NUEVA.');
+                }
+                document.getElementById('validateBuild').innerText = out.join('\n');
+            });
+        });
+
+        document.getElementById('btnApplyBuild').addEventListener('click', () => {
+            if (!validatedBuild) { document.getElementById('validateBuild').innerText = 'Valida primero.'; return; }
+            statusEl.innerText = '🎬 Llamando a Premiere (CN_buildCapsule)...';
+            const payload = { rows: validatedBuild.rows, name: 'Cápsula ' + new Date().toLocaleString() };
+            csInterface.evalScript('CN_buildCapsule(' + JSON.stringify(JSON.stringify(payload)) + ')', (res) => {
+                let r = null; try { r = JSON.parse(res); } catch (e) {}
+                if (r && r.ok) {
+                    mksList = r.positions.map(p => p.at); mkIdx = -1;
+                    statusEl.innerText = `OK · Clips: ${r.placed} · Markers: ${r.markers} · Total: ${fmt(r.total)}\nSecuencia creada: "${r.seqName}" (activa).` +
+                        (r.errorCount ? '\nAvisos:\n' + r.errors.slice(0, 3).join('\n') : '');
+                } else {
+                    statusEl.innerText = 'No se construyó:\n' + (r ? r.errors.join('\n') : res);
+                }
+            });
+        });
+
+        /* ================= navegar + guardar/cargar ================= */
+        function gotoMk(dir) {
+            if (!mksList.length) { statusEl.innerText = 'Valida un plan primero.'; return; }
+            mkIdx = (mkIdx + dir + mksList.length) % mksList.length;
+            statusEl.innerText = `⚠ Marker ${mkIdx + 1}/${mksList.length} @ ${mksList[mkIdx].toFixed(2)}s`;
+            csInterface.evalScript('CN_seek(' + mksList[mkIdx] + ')', () => {});
+        }
+        ['btnPrevMk','btnPrevMkC','btnPrevMkB'].forEach(id => document.getElementById(id).addEventListener('click', () => gotoMk(-1)));
+        ['btnNextMk','btnNextMkC','btnNextMkB'].forEach(id => document.getElementById(id).addEventListener('click', () => gotoMk(1)));
+        document.getElementById('btnPrevCut').addEventListener('click', () => {
+            if (!cutsList.length) { statusEl.innerText = 'Valida un plan con tramos primero.'; return; }
+            cutIdx = (cutIdx + 1) % cutsList.length;
+            statusEl.innerText = `Corte ${cutIdx + 1}/${cutsList.length} @ ${cutsList[cutIdx].toFixed(2)}s`;
+            csInterface.evalScript('CN_seek(' + cutsList[cutIdx] + ')', () => {});
+        });
+        document.getElementById('btnNextCut').addEventListener('click', () => {
+            if (!cutsList.length) { statusEl.innerText = 'Valida un plan primero.'; return; }
+            cutIdx = (cutIdx + 1 + cutsList.length) % cutsList.length;
+            statusEl.innerText = `Corte ${cutIdx + 1}/${cutsList.length} @ ${cutsList[cutIdx].toFixed(2)}s`;
+            csInterface.evalScript('CN_seek(' + cutsList[cutIdx] + ')', () => {});
+        });
+
+        document.getElementById('btnSave').addEventListener('click', () => {
+            const name = document.getElementById('planName').value.trim() || 'plan';
+            const dir = extDir() + '/plans';
+            try { fs.mkdirSync(dir, { recursive: true }); } catch (e) {}
+            const ta = (MODE === 'multi') ? document.getElementById('planMulti') : (MODE === 'caps' ? document.getElementById('planCaps') : document.getElementById('planBuild'));
+            fs.writeFileSync(dir + '/' + name + '.txt', ta.value);
+            statusEl.innerText = `Guardado: ${name}`;
+        });
+        document.getElementById('btnLoad').addEventListener('click', () => {
+            const name = document.getElementById('planName').value.trim() || 'plan';
+            const p = extDir() + '/plans/' + name + '.txt';
+            if (!fs.existsSync(p)) { statusEl.innerText = `No existe "${name}".`; return; }
+            const ta = (MODE === 'multi') ? document.getElementById('planMulti') : (MODE === 'caps' ? document.getElementById('planCaps') : document.getElementById('planBuild'));
+            ta.value = fs.readFileSync(p, 'utf8');
+            statusEl.innerText = `Cargado: ${name} — pulsa VALIDAR.`;
+        });
+    </script>
+</body>
+</html>
