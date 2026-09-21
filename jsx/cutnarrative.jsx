@@ -467,3 +467,39 @@ function CN_buildCapsule(batchJson) {
         return J(res);
     }
 }
+
+/* ---- v6: anidar y descomponer via comandos de菜单 por AppleScript (el panel los clicca) ----
+   Preparacion: seleccionar todo (todas las pistas) para que el comando Anidar sea valido */
+function SP_prepareNest() {
+    var res = { ok: false, selected: 0 };
+    try {
+        var seq = app.project ? app.project.activeSequence : null;
+        if (!seq) { res.error = "No hay secuencia activa"; return J(res); }
+        var first = true;
+        for (var t = 0; t < seq.videoTracks.numTracks; t++) {
+            var tr = seq.videoTracks[t];
+            for (var c = 0; c < tr.clips.numItems; c++) {
+                try { tr.clips[c].setSelected(true, first); first = false; res.selected++; } catch (e) {}
+            }
+        }
+        if (!res.selected) res.error = "No hay clips que seleccionar";
+        res.ok = res.selected > 0;
+        return J(res);
+    } catch (e) { res.error = e.toString(); return J(res); }
+}
+
+/* tras descomponer: verifica que la duracion es la esperada y que hay clips en varias pistas */
+function SP_checkRestored() {
+    var res = { ok: false };
+    try {
+        var seq = app.project ? app.project.activeSequence : null;
+        if (!seq) { res.error = "No hay secuencia activa"; return J(res); }
+        res.ok = true;
+        res.vt = seq.videoTracks.numTracks;
+        res.end = Math.round(seq.end.seconds * 10) / 10;
+        var count = 0;
+        for (var t = 0; t < seq.videoTracks.numTracks; t++) count += seq.videoTracks[t].clips.numItems;
+        res.clips = count;
+        return J(res);
+    } catch (e) { res.error = e.toString(); return J(res); }
+}

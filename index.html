@@ -108,6 +108,10 @@
         </div>
         <div class="card">
             <button class="go" id="btnApplyCaps">2 · ✂️ EXTRAER Y UNIR (clona siempre · marker por tramo)</button>
+            <button class="go" id="btnApplyNest" style="background:#8e44ad; margin-top:6px;">🧩 EXTRAER CON ANIDADO AUTOMÁTICO (nest → recortar → descomponer)</button>
+            <div class="chk" style="margin-top:4px; color:#9aa; font-size:9px;">
+                El modo anidado protege tu montaje: se anida todo, se recorta el nido y se descompone al final. Requiere permisos de Automatización de macOS (como Synchronize en Separación).
+            </div>
             <div class="mini">
                 <button class="mk" id="btnPrevMkC">⏮ marker</button>
                 <button class="mk" id="btnNextMkC">marker ⏭</button>
@@ -452,6 +456,37 @@
             });
         });
 
+        function invokeMenuCommand(menuName, itemName, done) {
+            let cp = null;
+            try { cp = require('child_process'); } catch (e) { cp = null; }
+            if (!cp) { done('failed', 'Node no disponible'); return; }
+            const script = [
+                'tell application "System Events"',
+                '  set procs to every application process whose name starts with "Adobe Premiere Pro"',
+                '  if (count of procs) is not 1 then error "PREMIERE_COUNT|" & (count of procs)',
+                '  tell item 1 of procs',
+                '    set frontmost to true',
+                '    delay 0.4',
+                '    click (first menu item of menu "' + menuName + '" of menu bar item "' + menuName + '" of menu bar 1 whose name starts with "' + itemName + '")',
+                '  end tell',
+                '  return "INVOKED"',
+                'end tell'
+            ].join('
+');
+            cp.execFile('/usr/bin/osascript', ['-e', script], { timeout: 12000 }, (err, stdout, stderr) => {
+                const txt = String((stderr || '') + (err && err.message ? '\n' + err.message : ''));
+                if (!err) { done('invoked', txt); return; }
+                if (/-1743|not authorized|no está autorizado/i.test(txt)) done('needs-automation', txt);
+                else if (/assistive/i.test(txt)) done('needs-accessibility', txt);
+                else done('failed', txt);
+            });
+        }
+        const MENU_HELP = {
+            'needs-automation': 'macOS necesita permiso: Privacidad y seguridad > Automatización > Premiere > System Events. Reintenta.',
+            'needs-accessibility': 'Privacidad y seguridad > Accesibilidad > activa Premiere. Reintenta.',
+            'failed': 'No pude clicar el menú (¿hay un diálogo abierto?). Hazlo a mano.'
+        };
+
         /* ================= CONSTRUIR CAPSULA ================= */
         document.getElementById('btnValidateBuild').addEventListener('click', () => {
             const text = document.getElementById('planBuild').value;
@@ -493,6 +528,100 @@
                 }
             });
         });
+
+        /* ================= EXTRAER CON ANIDADO ================= */
+        document.getElementById('btnApplyNest').addEventListener('click', () => {
+            if (!validatedCaps) { document.getElementById('validateCaps').innerText = 'Valida primero (botón 1).'; return; }
+            const rows = validatedCaps.rows;
+            if (!rows.length) return;
+            setBusy(true);
+
+            // PASO 0: clon
+            setStatus('PASO 1/6: Clonando secuencia...');
+            cs.evalScript('CN_cloneSeq()', (r) => {
+                let rr = null; try { rr = JSON.parse(r); } catch (e) {}
+                if (!rr || !rr.ok) { setStatus('No se pudo clonar: ' + (rr ? rr.error : r), 'err'); setBusy(false); return; }
+                setStatus('Clon lista: "' + rr.name + '"');
+
+                // PASO 1: seleccionar todo
+                setTimeout(() => {
+                    setStatus('PASO 2/6: Seleccionando todo...');
+                    cs.evalScript('SP_prepareNest()', (r2) => {
+                        let rr2 = null; try { rr2 = JSON.parse(r2); } catch (e) {}
+                        if (!rr2 || !rr2.ok || !rr2.selected) {
+                            setStatus('No pude seleccionar los clips. Anida a mano (Cmd+A > clic derecho > Anidar) y reintenta.', 'err');
+                            setBusy(false); return;
+                        }
+
+                        // PASO 2: Anidar via menu Clip > Nested
+                        setTimeout(() => {
+                            setStatus('PASO 3/6: Anidando (menú Clip > Nested)...');
+                            invokeMenuCommand('Clip', 'Nested', (st1, d1) => {
+                                if (st1 !== 'invoked') {
+                                    setStatus((MENU_HELP[st1] || MENU_HELP.failed) + '\nDetalle: ' + String(d1).slice(-200), 'err');
+                                    setBusy(false); return;
+                                }
+                                // PASO 3: recortar el nido por posiciones
+                                setTimeout(() => {
+                                    setStatus('PASO 4/6: Recortando el nido según tus tramos...');
+                                    cs.evalScript('SP_seek(0)', () => {});
+                                    const payload = { ranges: rows.map(x => ({ s: x.s, e: x.e, note: x.note })) };
+                                    cs.evalScript('CN_extract(' + JSON.stringify(JSON.stringify(payload)) + ')', (res3) => {
+                                        let r3 = null; try { r3 = JSON.parse(res3); } catch (e) {}
+                                        if (!r3 || !r3.ok) {
+                                            setStatus('Recorte falló (nido intacto, usa Cmd+Z si viste cambios):\n' + (r3 ? r3.errors.join('\n') : res3), 'err');
+                                            setBusy(false); return;
+                                        }
+                                        setStatus('Recorte OK: ' + r3.kept + ' tramos. Descomponiendo...');
+
+                                        // PASO 4: seleccionar los trozos de nido
+                                        setTimeout(() => {
+                                            cs.evalScript('SP_prepareNest()', (r4) => {
+                                                // PASO 5: descomponer via menu Clip > Un-Nest / Flatten
+                                                setTimeout(() => {
+                                                    setStatus('PASO 5/6: Descomponiendo el nido...');
+                                                    // El menu en castellano es "Descomponer"; en ingles "Nest" submenu "Flatten"
+                                                    invokeMenuCommand('Clip', 'Descomp', (st2a, d2a) => {
+                                                        if (st2a !== 'invoked') {
+                                                            // reintento en ingles
+                                                            invokeMenuCommand('Clip', 'Flatten', (st2b, d2b) => {
+                                                                if (st2b !== 'invoked') {
+                                                                    setStatus('Recorte OK, pero NO pude descomponer automáticamente.\nHazlo a mano: clic derecho sobre el nido > Descomponer.\nDetalle: ' + String(d2a).slice(-150), 'err');
+                                                                    setBusy(false); return;
+                                                                }
+                                                                finishNested(r3);
+                                                            });
+                                                            return;
+                                                        }
+                                                        finishNested(r3);
+                                                    });
+                                                }, 500);
+                                            });
+                                        }, 500);
+                                    });
+                                }, 500);
+                            });
+                        }, 500);
+                    });
+                }, 500);
+            });
+        });
+
+        function finishNested(r3) {
+            setTimeout(() => {
+                cs.evalScript('SP_checkRestored()', (r5) => {
+                    let rr5 = null; try { rr5 = JSON.parse(r5); } catch (e) {}
+                    setBusy(false);
+                    let m = '✔ COMPLETO · Tramos: ' + r3.kept + ' · Borrados: ' + r3.removed +
+                        '\nDuración: ' + r3.dur0 + 's → ' + r3.dur1 + 's (esperados ' + r3.totalKept + 's)' +
+                        (Math.abs((r3.dur1 || 0) - r3.totalKept) < 0.5 ? ' ✓' : ' ⚠️');
+                    if (rr5 && rr5.ok) m += '\nRestaurado: ' + rr5.clips + ' clips en ' + rr5.vt + ' pistas';
+                    m += '\n⚠ Markers: ' + r3.markers;
+                    if (r3.errorCount) m += '\n' + r3.errors.slice(0, 3).join('\n');
+                    setStatus(m, 'ok');
+                });
+            }, 500);
+        }
 
         /* ================= navegar + guardar/cargar ================= */
         function gotoMk(dir) {
