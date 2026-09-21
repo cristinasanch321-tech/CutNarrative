@@ -173,6 +173,7 @@
         let cutsList = [], cutIdx = -1;
         let mksList = [], mkIdx = -1;
         let validatedMulti = null, validatedCaps = null, validatedBuild = null;
+        let busyTimer = null;
 
         function extDir() {
             try { return csInterface.getSystemPath(SystemPath.EXTENSION); }
@@ -514,7 +515,13 @@
         });
 
         document.getElementById('btnApplyBuild').addEventListener('click', () => {
-            if (!validatedBuild) { document.getElementById('validateBuild').innerText = 'Valida primero.'; return; }
+            if (busy) { statusEl.innerText = '⏳ Hay una operación en curso (espera o reinicia el panel).'; return; }
+            if (!validatedBuild) {
+                document.getElementById('validateBuild').innerText =
+                    '⚠️ Valida la tabla primero (botón 1 · VALIDAR).\nSi ya la validaste y has cambiado algo, vuelve a validar.';
+                statusEl.innerText = 'Falta validar la tabla.';
+                return;
+            }
             statusEl.innerText = '🎬 Llamando a Premiere (CN_buildCapsule)...';
             const payload = { rows: validatedBuild.rows, name: 'Cápsula ' + new Date().toLocaleString() };
             csInterface.evalScript('CN_buildCapsule(' + JSON.stringify(JSON.stringify(payload)) + ')', (res) => {
