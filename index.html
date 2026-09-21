@@ -412,7 +412,21 @@
             if (!text.trim()) { document.getElementById('validateCaps').innerText = 'Tabla vacía.'; validatedCaps = null; return; }
             refreshProbe((pr) => {
                 if (!pr || !pr.ok) { document.getElementById('validateCaps').innerText = '✗ No puedo leer la secuencia.'; validatedCaps = null; return; }
-                if (SEQ_END <= 0) { document.getElementById('validateCaps').innerText = '✗ Duración desconocida. No se permite extraer.'; validatedCaps = null; return; }
+                if (SEQ_END <= 0) {
+                    // reintento: a veces el primer probe llega vacio justo tras abrir el proyecto
+                    setTimeout(() => {
+                        refreshProbe((pr2) => {
+                            if (pr2 && pr2.ok && SEQ_END > 0) {
+                                document.getElementById('validateCaps').innerText = '✓ Duración recuperada (' + fmt(SEQ_END) + '). Pulsa VALIDAR de nuevo.';
+                            } else {
+                                document.getElementById('validateCaps').innerText =
+                                    '✗ Duración desconocida (' + (pr2 ? ('secuencia "' + pr2.seq + '", fin=' + pr2.seqEnd + '"') : 'sin respuesta') + ')\n' +
+                                    '→ Pulsa 🔍 DIAGNÓSTICO y verifica que tu timeline esté ACTIVA (clic en su pestaña).\nSi muestra fin 0s: la secuencia activa está VACÍA.';
+                            }
+                        });
+                    }, 600);
+                    validatedCaps = null; return;
+                }
                 const baseTok = document.getElementById('tcBase').value.trim();
                 let baseSec = 0;
                 if (baseTok) { baseSec = parseTime(baseTok); if (isNaN(baseSec)) { document.getElementById('validateCaps').innerText = '✗ TC base inválido'; validatedCaps = null; return; } }
