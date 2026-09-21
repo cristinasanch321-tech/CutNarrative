@@ -1,7 +1,8 @@
-/* Multicam por Transcripción - jsx/multicam.jsx
-   CN_ping/CN_probe/CN_seek/CN_getPlayhead/CN_cloneSeq
-   CN_execute: corta video y VACIA pistas no elegidas (huecos, sin ripple, sin tocar audio)
-   CN_addMarkers: crea markers en la secuencia */
+/* CutNarrative v6.5 - jsx COMPLETO
+   CN_ping/CN_probe(fin real desde clips)/CN_seek/CN_cloneSeq
+   CN_execute+CN_execute_file (multicam: corta y vacia) / CN_addMarkers
+   CN_extract v5 (recortador por POSICIONES: respeta multicam/texto/audio)
+   CN_buildCapsule v6 (projectItem directo) / SP_prepareNest/SP_checkRestored */
 
 function J(o) {
     var t = typeof o, k, i;
@@ -64,6 +65,29 @@ function CN_ping() {
     } catch (e) { return J({ ok: false, error: e.toString() }); }
 }
 
+/* fin real: max entre seq.end y el ultimo clip de todas las pistas */
+function computeRealEnd(seq) {
+    var end = 0;
+    try { end = seq.end.seconds; } catch (e1) { end = 0; }
+    var fromClips = 0, t;
+    for (t = 0; t < seq.videoTracks.numTracks; t++) {
+        var tv = seq.videoTracks[t];
+        if (tv.clips.numItems > 0) {
+            var ce = tv.clips[tv.clips.numItems - 1].end.seconds;
+            if (ce > fromClips) fromClips = ce;
+        }
+    }
+    for (t = 0; t < seq.audioTracks.numTracks; t++) {
+        var ta = seq.audioTracks[t];
+        if (ta.clips.numItems > 0) {
+            var ae = ta.clips[ta.clips.numItems - 1].end.seconds;
+            if (ae > fromClips) fromClips = ae;
+        }
+    }
+    if (end < fromClips - 0.5) end = fromClips;
+    return end;
+}
+
 function CN_probe() {
     var res = {};
     try {
@@ -72,10 +96,10 @@ function CN_probe() {
         res.ok = true;
         res.seq = seq.name;
         res.videoTracks = seq.videoTracks.numTracks;
+        res.audioTracks = seq.audioTracks.numTracks;
         res.fps = Math.round((254016000000 / Number(seq.timebase)) * 1000) / 1000;
         res.zeroSec = getZeroSec(seq);
-        try { res.seqEnd = Math.round(seq.end.seconds * 10) / 10; } catch (eE) { res.seqEnd = -1; }
-        try { res.markers = seq.markers.numMarkers; } catch (eM) { res.markers = -1; }
+        res.seqEnd = Math.round(computeRealEnd(seq) * 1000) / 1000;
         res.tracks = [];
         for (var t = 0; t < seq.videoTracks.numTracks; t++) {
             var tr = seq.videoTracks[t];
@@ -100,14 +124,37 @@ function CN_seek(tSec) {
     } catch (e) { return J({ ok: false, error: String(e) }); }
 }
 
-function CN_getPlayhead() {
+function SP_prepareNest() {
+    var res = { ok: false, selected: 0 };
     try {
         var seq = app.project ? app.project.activeSequence : null;
-        if (!seq) return J({ ok: false, error: "No hay secuencia activa" });
-        var t = seq.playerPosition.seconds - getZeroSec(seq);
-        if (t < 0) t = 0;
-        return J({ ok: true, t: Math.round(t * 1000) / 1000 });
-    } catch (e) { return J({ ok: false, error: String(e) }); }
+        if (!seq) { res.error = "No hay secuencia activa"; return J(res); }
+        var first = true;
+        for (var t = 0; t < seq.videoTracks.numTracks; t++) {
+            var tr = seq.videoTracks[t];
+            for (var c = 0; c < tr.clips.numItems; c++) {
+                try { tr.clips[c].setSelected(true, first); first = false; res.selected++; } catch (e) {}
+            }
+        }
+        if (!res.selected) res.error = "No hay clips que seleccionar";
+        res.ok = res.selected > 0;
+        return J(res);
+    } catch (e) { res.error = e.toString(); return J(res); }
+}
+
+function SP_checkRestored() {
+    var res = { ok: false };
+    try {
+        var seq = app.project ? app.project.activeSequence : null;
+        if (!seq) { res.error = "No hay secuencia activa"; return J(res); }
+        res.ok = true;
+        res.vt = seq.videoTracks.numTracks;
+        res.end = Math.round(computeRealEnd(seq) * 10) / 10;
+        var count = 0;
+        for (var t = 0; t < seq.videoTracks.numTracks; t++) count += seq.videoTracks[t].clips.numItems;
+        res.clips = count;
+        return J(res);
+    } catch (e) { res.error = e.toString(); return J(res); }
 }
 
 function CN_cloneSeq() {
@@ -117,7 +164,7 @@ function CN_cloneSeq() {
         var cl = null, how = "";
         try { cl = seq.clone(); how = "clone()"; } catch (e1) { cl = null; }
         if (!cl) {
-            try { cl = app.project.createNewSequenceFromSequence(seq.name + " [MULTICAM]", seq); how = "createNew"; } catch (e2) { cl = null; }
+            try { cl = app.project.createNewSequenceFromSequence(seq.name + " [CUTNARRATIVE]", seq); how = "createNew"; } catch (e2) { cl = null; }
         }
         if (!cl) return J({ ok: false, error: "Esta version no permite clonar desde script" });
         try { app.project.activeSequence = cl; } catch (eA) {}
@@ -125,34 +172,26 @@ function CN_cloneSeq() {
     } catch (e) { return J({ ok: false, error: String(e) }); }
 }
 
-/* payload: { tracks: nV, cuts: [seg], segments: [{s,e,t}] }  t=0 => vaciar todas */
 function CN_execute(batchJson) {
     var res = { ok: false, cuts: 0, applied: 0, errorCount: 0, errors: [], clips: [] };
     function err(m) { res.errorCount++; if (res.errors.length < 15) res.errors.push(String(m)); }
     try {
         var seq = app.project ? app.project.activeSequence : null;
         if (!seq) { res.errors.push("No hay secuencia activa"); return J(res); }
-
         var batch = eval("(" + batchJson + ")");
         if (!batch || !batch.segments || !batch.segments.length) { res.ok = true; return J(res); }
-
         app.enableQE();
         var qeSeq = qe.project.getActiveSequence();
         if (!qeSeq) { res.errors.push("QE no disponible"); return J(res); }
-
         var fps = 254016000000 / Number(seq.timebase);
         var zeroSec = getZeroSec(seq);
-        res.fps = Math.round(fps * 1000) / 1000;
-        var dur0 = seq.end.seconds;
-
+        var dur0 = computeRealEnd(seq);
         var nV = Math.min(batch.tracks || seq.videoTracks.numTracks, seq.videoTracks.numTracks);
-
         var cutFrames = [], i, fr;
         for (i = 0; i < (batch.cuts || []).length; i++) {
             fr = Math.round((batch.cuts[i] + zeroSec) * fps);
             if (fr > 0 && (cutFrames.length === 0 || cutFrames[cutFrames.length - 1] !== fr)) cutFrames.push(fr);
         }
-        res.cutFrames = cutFrames.length;
         for (var t = 0; t < nV; t++) {
             var qeT = qeSeq.getVideoTrackAt(t);
             for (var c = 0; c < cutFrames.length; c++) {
@@ -160,8 +199,8 @@ function CN_execute(batchJson) {
                 catch (e) { err("razor p" + t + " f" + cutFrames[c] + ": " + e); }
             }
         }
-
         var segs = batch.segments;
+        var firstS = segs[0].s;
         for (t = 0; t < nV; t++) {
             var domTrack = seq.videoTracks[t];
             var n = domTrack.clips.numItems;
@@ -169,6 +208,7 @@ function CN_execute(batchJson) {
             for (c = 0; c < n; c++) {
                 var clip = domTrack.clips[c];
                 var mid = (clip.start.seconds + clip.end.seconds) / 2;
+                if (mid < firstS) continue;
                 while (si < segs.length - 1 && mid >= segs[si].e) si++;
                 var chosen = segs[si].t;
                 if (chosen === 0 || (chosen - 1) !== t) toRemove.push(clip);
@@ -179,9 +219,8 @@ function CN_execute(batchJson) {
             }
             res.clips.push((n - toRemove.length) + "/" + n);
         }
-
         res.dur0 = Math.round(dur0 * 10) / 10;
-        try { res.dur1 = Math.round(seq.end.seconds * 10) / 10; } catch (eD) {}
+        try { res.dur1 = Math.round(computeRealEnd(seq) * 10) / 10; } catch (eD) {}
         if (typeof res.dur1 === "number" && Math.abs(res.dur1 - dur0) > 0.5) {
             res.errorCount++;
             res.errors.push("AVISO: la duracion cambio de " + dur0.toFixed(1) + "s a " + res.dur1.toFixed(1) + "s");
@@ -206,7 +245,6 @@ function CN_execute_file(path) {
     } catch (e) { return J({ ok: false, errors: ["CN_execute_file: " + e.toString()] }); }
 }
 
-/* payload: { markers: [ { t: segundos, name: "...", comment: "..." } ] } */
 function CN_addMarkers(batchJson) {
     var res = { ok: false, created: 0, errors: [] };
     try {
@@ -221,7 +259,7 @@ function CN_addMarkers(batchJson) {
                 if (m) {
                     m.name = String(ms[i].name || "Marker");
                     try { m.comments = String(ms[i].comment || ""); } catch (eC) {}
-                    try { m.setColorByIndex(1); } catch (eCol) {}
+                    try { m.setColorByIndex(2); } catch (eCol) {}
                     res.created++;
                 }
             } catch (e) { res.errors.push("marker @" + ms[i].t + "s: " + e); }
@@ -231,9 +269,7 @@ function CN_addMarkers(batchJson) {
     } catch (e) { res.errors.push("FATAL: " + e.toString()); return J(res); }
 }
 
-/* ---- EXTRAER Y UNIR v4 + CONSTRUIR CAPSULA v6 (fusion desde Corte Narrado) ---- */
-
-/* ================= EXTRAER Y UNIR v4 ================= */
+/* EXTRAER Y UNIR v5: recortador por POSICIONES (respeta multicam/texto/audio) */
 function CN_extract(batchJson) {
     var res = { ok: false, kept: 0, removed: 0, markers: 0, totalKept: 0, dur0: 0, dur1: 0,
                 errorCount: 0, errors: [], positions: [] };
@@ -248,9 +284,9 @@ function CN_extract(batchJson) {
 
         var fps = 254016000000 / Number(seq.timebase);
         var zeroSec = getZeroSec(seq);
-        var dur0 = seq.end.seconds;
+        var dur0 = computeRealEnd(seq);
         res.dur0 = Math.round(dur0 * 10) / 10;
-        if (!isFinite(dur0) || dur0 <= 0) { err("No pude leer la duracion de la secuencia. NADA tocado."); return J(res); }
+        if (!isFinite(dur0) || dur0 <= 0) { err("No pude leer la duracion (ni clips). NADA tocado."); return J(res); }
 
         ranges.sort(function (a, b) { return a.s - b.s; });
         var i;
@@ -268,7 +304,7 @@ function CN_extract(batchJson) {
         app.enableQE();
         var qeSeq = qe.project.getActiveSequence();
         if (!qeSeq || qeSeq.name !== seq.name) {
-            err("Desincronizacion interna DOM/QE. NADA tocado. Reinicia Premiere y reintenta.");
+            err("Desincronizacion DOM/QE. NADA tocado. Reinicia Premiere.");
             return J(res);
         }
 
@@ -283,19 +319,16 @@ function CN_extract(batchJson) {
         for (var vt = 0; vt < seq.videoTracks.numTracks; vt++) {
             var qv = qeSeq.getVideoTrackAt(vt);
             for (i = 0; i < bounds.length; i++) {
-                try { qv.razor(TC(bounds[i], fps)); } catch (eV) { razorFails++; err("razor V" + (vt + 1) + ": " + eV); }
+                try { qv.razor(TC(bounds[i], fps)); } catch (eV) { razorFails++; }
             }
         }
         for (var at = 0; at < seq.audioTracks.numTracks; at++) {
             var qa = qeSeq.getAudioTrackAt(at);
             for (i = 0; i < bounds.length; i++) {
-                try { qa.razor(TC(bounds[i], fps)); } catch (eA) { razorFails++; err("razor A" + (at + 1) + ": " + eA); }
+                try { qa.razor(TC(bounds[i], fps)); } catch (eA) { razorFails++; }
             }
         }
-        if (razorFails > 0) {
-            err("Hubo " + razorFails + " fallos de corte. SE DETIENE ANTES DE BORRAR. Cmd+Z y avisame.");
-            return J(res);
-        }
+        if (razorFails > 0) err("Aviso: " + razorFails + " cortes no pudieron hacerse. El recorte puede ser parcial.");
 
         var rem = [], cur = 0;
         for (i = 0; i < ranges.length; i++) {
@@ -323,33 +356,35 @@ function CN_extract(batchJson) {
         var jobs = [];
         for (i = 0; i < rem.length; i++) {
             var s = rem[i][0], e = rem[i][1];
-            var lifts = [], carrier = null, t2, cl2, k2;
-            for (t2 = 0; t2 < seq.videoTracks.numTracks; t2++) {
-                cl2 = clipsIn(seq.videoTracks[t2], s, e);
-                if (!tiles(cl2, s, e)) { err("PRE-CHECK: V" + (t2 + 1) + " no queda exactamente cortada. NADA borrado: Cmd+Z y avisame."); return J(res); }
-                for (k2 = 0; k2 < cl2.length; k2++) {
-                    if (t2 === 0 && !carrier) carrier = cl2[k2];
-                    else lifts.push(cl2[k2]);
+            var all = [];
+            for (var t2 = 0; t2 < seq.videoTracks.numTracks; t2++) {
+                var cl2 = clipsIn(seq.videoTracks[t2], s, e);
+                if (!tiles(cl2, s, e)) {
+                    err("PRE-CHECK: V" + (t2 + 1) + " no queda exactamente cortada en " + s.toFixed(1) + "-" + e.toFixed(1) + "s. NADA borrado: Cmd+Z y avisame.");
+                    return J(res);
                 }
+                for (var k2 = 0; k2 < cl2.length; k2++) all.push(cl2[k2]);
             }
             for (t2 = 0; t2 < seq.audioTracks.numTracks; t2++) {
-                cl2 = clipsIn(seq.audioTracks[t2], s, e);
-                if (!tiles(cl2, s, e)) { err("PRE-CHECK: A" + (t2 + 1) + " no queda exactamente cortada. NADA borrado: Cmd+Z y avisame."); return J(res); }
-                for (k2 = 0; k2 < cl2.length; k2++) lifts.push(cl2[k2]);
+                var cl3 = clipsIn(seq.audioTracks[t2], s, e);
+                if (!tiles(cl3, s, e)) {
+                    err("PRE-CHECK: A" + (t2 + 1) + " no queda exactamente cortada. NADA borrado: Cmd+Z y avisame.");
+                    return J(res);
+                }
+                for (var k3 = 0; k3 < cl3.length; k3++) all.push(cl3[k3]);
             }
-            if (!carrier && lifts.length) carrier = lifts.shift();
-            if (carrier || lifts.length) jobs.push({ s: s, e: e, lifts: lifts, carrier: carrier });
+            if (all.length) jobs.push({ s: s, e: e, clips: all });
         }
 
         for (i = jobs.length - 1; i >= 0; i--) {
             var job = jobs[i];
-            for (var L = 0; L < job.lifts.length; L++) {
-                try { job.lifts[L].remove(false, false); res.removed++; }
-                catch (eL) { err("lift @" + job.s.toFixed(1) + "s: " + eL); }
-            }
-            if (job.carrier) {
-                try { job.carrier.remove(true, false); res.removed++; }
-                catch (eR) { err("ripple @" + job.s.toFixed(1) + "s: " + eR); }
+            for (var L = 0; L < job.clips.length; L++) {
+                var isFirst = (L === 0);
+                try { job.clips[L].remove(isFirst, !isFirst); res.removed++; }
+                catch (eR) {
+                    try { job.clips[L].remove(false, true); res.removed++; }
+                    catch (eR2) { err("borrar @" + job.s.toFixed(1) + "s: " + eR2); }
+                }
             }
         }
 
@@ -371,9 +406,9 @@ function CN_extract(batchJson) {
         }
         res.totalKept = Math.round(acc * 100) / 100;
 
-        try { res.dur1 = Math.round(seq.end.seconds * 100) / 100; } catch (eD) {}
+        try { res.dur1 = Math.round(computeRealEnd(seq) * 100) / 100; } catch (eD) {}
         if (res.dur1 && Math.abs(res.dur1 - res.totalKept) > 0.5)
-            err("AVISO: duracion final " + res.dur1 + "s pero se esperaban " + res.totalKept + "s. Cmd+Z y avisame.");
+            err("AVISO: duracion final " + res.dur1 + "s pero se esperaban " + res.totalKept + "s.");
         res.ok = (res.errorCount === 0);
         return J(res);
     } catch (e) {
@@ -382,7 +417,7 @@ function CN_extract(batchJson) {
     }
 }
 
-/* ================= CONSTRUIR CAPSULA v6 (projectItem directo, sin media path) ================= */
+/* CONSTRUIR CAPSULA v6: projectItem directo, sin media path */
 function CN_buildCapsule(batchJson) {
     var res = { ok: false, placed: 0, markers: 0, total: 0, errorCount: 0, errors: [], positions: [] };
     function err(m) { res.errorCount++; if (res.errors.length < 15) res.errors.push(String(m)); }
@@ -390,13 +425,11 @@ function CN_buildCapsule(batchJson) {
         var batch = eval("(" + batchJson + ")");
         var rows = (batch && batch.rows) ? batch.rows.slice() : [];
         if (!rows.length) { err("No hay filas"); return J(res); }
-
         var seq = app.project ? app.project.activeSequence : null;
         if (!seq) { err("No hay secuencia activa"); return J(res); }
         var v0 = seq.videoTracks[0];
         if (v0.clips.numItems < 1) { err("La secuencia activa no tiene clips en V1"); return J(res); }
         var zeroSec = getZeroSec(seq);
-
         var srcMap = [];
         for (var i = 0; i < v0.clips.numItems; i++) {
             var c = v0.clips[i];
@@ -408,24 +441,21 @@ function CN_buildCapsule(batchJson) {
             srcMap.push({ start: c.start.seconds, end: c.end.seconds, mediaStart: ms, item: pi });
         }
         if (!srcMap.length) { err("Los clips de V1 no exponen projectItem. NADA hecho."); return J(res); }
-
         function findSource(sec) {
             for (var k = 0; k < srcMap.length; k++)
                 if (sec >= srcMap[k].start - 0.05 && sec <= srcMap[k].end + 0.05) return srcMap[k];
             return null;
         }
-
         var capName = batch.name || ("Cápsula " + new Date().toLocaleString());
         var newSeq = null;
         try { newSeq = app.project.createNewSequence(capName, ""); } catch (eN) { newSeq = null; }
         if (!newSeq) { err("No pude crear la secuencia nueva"); return J(res); }
-
         var cursor = 0;
         var audioWarns = 0;
         for (var r = 0; r < rows.length; r++) {
             var row = rows[r];
             var src = findSource(row.s);
-            if (!src) { err("fila " + (r + 1) + ": ningún clip de V1 cubre " + row.s.toFixed(2) + "s (¿TC base?)"); continue; }
+            if (!src) { err("fila " + (r + 1) + ": ningún clip de V1 cubre " + row.s.toFixed(2) + "s"); continue; }
             var dur = row.e - row.s;
             if (dur <= 0) { err("fila " + (r + 1) + ": OUT <= IN"); continue; }
             var item = src.item;
@@ -439,7 +469,6 @@ function CN_buildCapsule(batchJson) {
                 try { item.clearInPoint(4); } catch (e1) {}
                 try { item.clearOutPoint(4); } catch (e2) {}
             } catch (eP) { err("fila " + (r + 1) + ": " + eP); continue; }
-
             try {
                 var mk = newSeq.markers.createMarker(cursor);
                 if (mk) {
@@ -450,12 +479,11 @@ function CN_buildCapsule(batchJson) {
                     res.markers++;
                 }
             } catch (eK) { err("marker fila " + (r + 1) + ": " + eK); }
-
             res.positions.push({ at: Math.round(cursor * 100) / 100, dur: Math.round(dur * 100) / 100, note: row.note || "" });
             cursor += dur;
             res.placed++;
         }
-        if (audioWarns > 0) err("Aviso: " + audioWarns + " clip(s) sin audio colocado por la API (vídeo sí). Dímelo.");
+        if (audioWarns > 0) err("Aviso: " + audioWarns + " clip(s) sin audio por la API (vídeo sí).");
         res.total = Math.round(cursor * 100) / 100;
         res.seqName = newSeq.name;
         try { app.project.activeSequence = newSeq; } catch (eA) {}
@@ -466,40 +494,4 @@ function CN_buildCapsule(batchJson) {
         res.errors.push("FATAL: " + e.toString() + " (linea " + e.line + ")");
         return J(res);
     }
-}
-
-/* ---- v6: anidar y descomponer via comandos de菜单 por AppleScript (el panel los clicca) ----
-   Preparacion: seleccionar todo (todas las pistas) para que el comando Anidar sea valido */
-function SP_prepareNest() {
-    var res = { ok: false, selected: 0 };
-    try {
-        var seq = app.project ? app.project.activeSequence : null;
-        if (!seq) { res.error = "No hay secuencia activa"; return J(res); }
-        var first = true;
-        for (var t = 0; t < seq.videoTracks.numTracks; t++) {
-            var tr = seq.videoTracks[t];
-            for (var c = 0; c < tr.clips.numItems; c++) {
-                try { tr.clips[c].setSelected(true, first); first = false; res.selected++; } catch (e) {}
-            }
-        }
-        if (!res.selected) res.error = "No hay clips que seleccionar";
-        res.ok = res.selected > 0;
-        return J(res);
-    } catch (e) { res.error = e.toString(); return J(res); }
-}
-
-/* tras descomponer: verifica que la duracion es la esperada y que hay clips en varias pistas */
-function SP_checkRestored() {
-    var res = { ok: false };
-    try {
-        var seq = app.project ? app.project.activeSequence : null;
-        if (!seq) { res.error = "No hay secuencia activa"; return J(res); }
-        res.ok = true;
-        res.vt = seq.videoTracks.numTracks;
-        res.end = Math.round(seq.end.seconds * 10) / 10;
-        var count = 0;
-        for (var t = 0; t < seq.videoTracks.numTracks; t++) count += seq.videoTracks[t].clips.numItems;
-        res.clips = count;
-        return J(res);
-    } catch (e) { res.error = e.toString(); return J(res); }
 }
