@@ -359,10 +359,12 @@ function CN_extract(batchJson) {
         }
         function tiles(clips, s, e) {
             if (!clips.length) return true;
-            if (Math.abs(clips[0].start.seconds - s) > TOL) return false;
-            if (Math.abs(clips[clips.length - 1].end.seconds - e) > TOL) return false;
+            // huecos al inicio/final del rango son NORMALES (montaje): solo se comprueban huecos internos
             for (var k = 1; k < clips.length; k++)
-                if (Math.abs(clips[k].start.seconds - clips[k - 1].end.seconds) > TOL) return false;
+                if (clips[k].start.seconds - clips[k - 1].end.seconds > TOL) return false;
+            // y que ningun clip se salga del rango (imposible tras razor, pero por seguridad)
+            for (var k2 = 0; k2 < clips.length; k2++)
+                if (clips[k2].start.seconds < s - 0.5 || clips[k2].end.seconds > e + 0.5) return false;
             return true;
         }
         var jobs = [];
