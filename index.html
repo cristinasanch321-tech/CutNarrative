@@ -467,7 +467,9 @@
                 setStatus(`Copia: "${rr.name}". Extrayendo...`);
                 const payload = { ranges: rows.map(x => ({ s: x.s, e: x.e, note: x.note })) };
                 setTimeout(() => {
+                    setStatus('TRAZA: llamando a CN_extract con ' + rows.length + ' tramos...');
                     cs.evalScript('CN_extract(' + JSON.stringify(JSON.stringify(payload)) + ')', (res) => {
+                        setStatus('TRAZA: respuesta recibida: ' + String(res).slice(0, 120));
                         let r2 = null; try { r2 = JSON.parse(res); } catch (e) {}
                         setBusy(false);
                         if (r2 && r2.ok) {
