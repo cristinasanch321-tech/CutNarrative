@@ -349,22 +349,24 @@ function CN_extract(batchJson) {
         }
         if (dur0 - cur > TOL) rem.push([cur, dur0]);
 
+        var TOLA = 0.25;  // tolerancia generosa para audio vinculado (el corte puede caer 1 frame desplazado)
         function clipsIn(track, s, e) {
             var out = [], n = track.clips.numItems;
             for (var k = 0; k < n; k++) {
                 var c = track.clips[k];
-                if (c.end.seconds > s + TOL && c.start.seconds < e - TOL) out.push(c);
+                if (c.end.seconds > s + TOLA && c.start.seconds < e - TOLA) out.push(c);
             }
             return out;
         }
-        function tiles(clips, s, e) {
+        function tiles(clips, s, e, isAudio) {
             if (!clips.length) return true;
-            // huecos al inicio/final del rango son NORMALES (montaje): solo se comprueban huecos internos
+            var T = isAudio ? TOLA : TOL;
+            // huecos internos: solo si son grandes (>1 frame desplazado)
             for (var k = 1; k < clips.length; k++)
-                if (clips[k].start.seconds - clips[k - 1].end.seconds > TOL) return false;
-            // y que ningun clip se salga del rango (imposible tras razor, pero por seguridad)
-            for (var k2 = 0; k2 < clips.length; k2++)
-                if (clips[k2].start.seconds < s - 0.5 || clips[k2].end.seconds > e + 0.5) return false;
+                if (clips[k].start.seconds - clips[k - 1].end.seconds > T) return false;
+            // extremos del rango: con tolerancia generosa en audio
+            if (clips[0].start.seconds > s + T) return false;
+            if (clips[clips.length - 1].end.seconds < e - T) return false;
             return true;
         }
         var jobs = [];
@@ -373,7 +375,7 @@ function CN_extract(batchJson) {
             var all = [];
             for (var t2 = 0; t2 < seq.videoTracks.numTracks; t2++) {
                 var cl2 = clipsIn(seq.videoTracks[t2], s, e);
-                if (!tiles(cl2, s, e)) {
+                if (!tiles(cl2, s, e, false)) {
                     var det = [];
                     for (var k4 = 0; k4 < cl2.length; k4++)
                         det.push("[" + cl2[k4].start.seconds.toFixed(2) + "-" + cl2[k4].end.seconds.toFixed(2) + "]");
@@ -386,7 +388,7 @@ function CN_extract(batchJson) {
             }
             for (t2 = 0; t2 < seq.audioTracks.numTracks; t2++) {
                 var cl3 = clipsIn(seq.audioTracks[t2], s, e);
-                if (!tiles(cl3, s, e)) {
+                if (!tiles(cl3, s, e, true)) {
                     var detA = [];
                     for (var k5 = 0; k5 < cl3.length; k5++)
                         detA.push("[" + cl3[k5].start.seconds.toFixed(2) + "-" + cl3[k5].end.seconds.toFixed(2) + "]" + (cl3[k5].mediaType === 1 ? "(video)" : ""));
