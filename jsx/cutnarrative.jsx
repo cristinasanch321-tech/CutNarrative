@@ -319,16 +319,28 @@ function CN_extract(batchJson) {
         for (var vt = 0; vt < seq.videoTracks.numTracks; vt++) {
             var qv = qeSeq.getVideoTrackAt(vt);
             for (i = 0; i < bounds.length; i++) {
-                try { qv.razor(TC(bounds[i], fps)); } catch (eV) { razorFails++; }
+                var did = false;
+                for (var att = 0; att < 2 && !did; att++) {
+                    try { qv.razor(TC(bounds[i], fps)); did = true; }
+                    catch (eV) {
+                        if (att === 1) { razorFails++; err("razor V" + (vt + 1) + " @" + bounds[i] + ": " + eV); }
+                    }
+                }
             }
         }
         for (var at = 0; at < seq.audioTracks.numTracks; at++) {
             var qa = qeSeq.getAudioTrackAt(at);
             for (i = 0; i < bounds.length; i++) {
-                try { qa.razor(TC(bounds[i], fps)); } catch (eA) { razorFails++; }
+                var did2 = false;
+                for (var att2 = 0; att2 < 2 && !did2; att2++) {
+                    try { qa.razor(TC(bounds[i], fps)); did2 = true; }
+                    catch (eA) {
+                        if (att2 === 1) { razorFails++; err("razor A" + (at + 1) + " @" + bounds[i] + ": " + eA); }
+                    }
+                }
             }
         }
-        if (razorFails > 0) err("Aviso: " + razorFails + " cortes no pudieron hacerse. El recorte puede ser parcial.");
+        if (razorFails > 0) err("Aviso: " + razorFails + " cortes fallaron (¿pista bloqueada?).");
 
         var rem = [], cur = 0;
         for (i = 0; i < ranges.length; i++) {
@@ -360,7 +372,12 @@ function CN_extract(batchJson) {
             for (var t2 = 0; t2 < seq.videoTracks.numTracks; t2++) {
                 var cl2 = clipsIn(seq.videoTracks[t2], s, e);
                 if (!tiles(cl2, s, e)) {
-                    err("PRE-CHECK: V" + (t2 + 1) + " no queda exactamente cortada en " + s.toFixed(1) + "-" + e.toFixed(1) + "s. NADA borrado: Cmd+Z y avisame.");
+                    var det = [];
+                    for (var k4 = 0; k4 < cl2.length; k4++)
+                        det.push("[" + cl2[k4].start.seconds.toFixed(2) + "-" + cl2[k4].end.seconds.toFixed(2) + "]");
+                    err("PRE-CHECK V" + (t2 + 1) + " en " + s.toFixed(1) + "-" + e.toFixed(1) + "s: clips vistos: " +
+                        (cl2.length ? det.join(" ") : "NINGUNO (pista vacia ahi)") +
+                        " — no cubren exactamente el rango. NADA borrado.\n¿Pista bloqueada o clip no cortado? Comandos Z y revisa.");
                     return J(res);
                 }
                 for (var k2 = 0; k2 < cl2.length; k2++) all.push(cl2[k2]);
