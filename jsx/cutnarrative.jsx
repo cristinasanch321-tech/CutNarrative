@@ -349,69 +349,60 @@ function CN_extract(batchJson) {
         }
         if (dur0 - cur > TOL) rem.push([cur, dur0]);
 
-        var TOLA = 0.25;  // tolerancia generosa para audio vinculado (el corte puede caer 1 frame desplazado)
-        function clipsIn(track, s, e) {
+        /* v6.12: borrado DIRECTO por rangos, todas las pistas, de derecha a izquierda.
+           Sin pre-check de cobertura (los huecos en extremos son normales en montaje).
+           Unica regla: cada clip intersectante debe estar COMPLETAMENTE dentro del rango
+           (si se sale parcialmente, el razor fallo y borrarlo entero quitaria contenido). */
+        function clipsInRange(track, s, e) {
             var out = [], n = track.clips.numItems;
             for (var k = 0; k < n; k++) {
                 var c = track.clips[k];
-                if (c.end.seconds > s + TOLA && c.start.seconds < e - TOLA) out.push(c);
+                if (c.end.seconds > s + TOL && c.start.seconds < e - TOL) out.push(c);
             }
             return out;
         }
-        function tiles(clips, s, e, isAudio) {
-            if (!clips.length) return true;
-            var T = isAudio ? TOLA : TOL;
-            // huecos internos: solo si son grandes (>1 frame desplazado)
-            for (var k = 1; k < clips.length; k++)
-                if (clips[k].start.seconds - clips[k - 1].end.seconds > T) return false;
-            // extremos del rango: con tolerancia generosa en audio
-            if (clips[0].start.seconds > s + T) return false;
-            if (clips[clips.length - 1].end.seconds < e - T) return false;
-            return true;
-        }
-        var jobs = [];
-        for (i = 0; i < rem.length; i++) {
+        var aborted = false;
+        for (i = rem.length - 1; i >= 0 && !aborted; i--) {
             var s = rem[i][0], e = rem[i][1];
-            var all = [];
-            for (var t2 = 0; t2 < seq.videoTracks.numTracks; t2++) {
-                var cl2 = clipsIn(seq.videoTracks[t2], s, e);
-                if (!tiles(cl2, s, e, false)) {
-                    var det = [];
-                    for (var k4 = 0; k4 < cl2.length; k4++)
-                        det.push("[" + cl2[k4].start.seconds.toFixed(2) + "-" + cl2[k4].end.seconds.toFixed(2) + "]");
-                    err("PRE-CHECK V" + (t2 + 1) + " en " + s.toFixed(1) + "-" + e.toFixed(1) + "s: clips vistos: " +
-                        (cl2.length ? det.join(" ") : "NINGUNO (pista vacia ahi)") +
-                        " — no cubren exactamente el rango. NADA borrado.\n¿Pista bloqueada o clip no cortado? Comandos Z y revisa.");
-                    return J(res);
+            var all = [], partial = null, t2 = 0;
+            for (t2 = 0; t2 < seq.videoTracks.numTracks && !partial; t2++) {
+                var clV = clipsInRange(seq.videoTracks[t2], s, e);
+                for (var kV = 0; kV < clV.length; kV++) {
+                    if (clV[kV].start.seconds < s - TOL || clV[kV].end.seconds > e + TOL) {
+                        partial = { tr: "V" + (t2 + 1), st: clV[kV].start.seconds, en: clV[kV].end.seconds };
+                        break;
+                    }
+                    all.push(clV[kV]);
                 }
-                for (var k2 = 0; k2 < cl2.length; k2++) all.push(cl2[k2]);
             }
-            for (t2 = 0; t2 < seq.audioTracks.numTracks; t2++) {
-                var cl3 = clipsIn(seq.audioTracks[t2], s, e);
-                if (!tiles(cl3, s, e, true)) {
-                    var detA = [];
-                    for (var k5 = 0; k5 < cl3.length; k5++)
-                        detA.push("[" + cl3[k5].start.seconds.toFixed(2) + "-" + cl3[k5].end.seconds.toFixed(2) + "]" + (cl3[k5].mediaType === 1 ? "(video)" : ""));
-                    err("PRE-CHECK A" + (t2 + 1) + " en " + s.toFixed(1) + "-" + e.toFixed(1) + "s: clips: " +
-                        (cl3.length ? detA.join(" ") : "NINGUNO") + " — NADA borrado.");
-                    return J(res);
+            for (t2 = 0; t2 < seq.audioTracks.numTracks && !partial; t2++) {
+                var clA = clipsInRange(seq.audioTracks[t2], s, e);
+                for (var kA = 0; kA < clA.length; kA++) {
+                    if (clA[kA].start.seconds < s - TOL || clA[kA].end.seconds > e + TOL) {
+                        partial = { tr: "A" + (t2 + 1), st: clA[kA].start.seconds, en: clA[kA].end.seconds };
+                        break;
+                    }
+                    all.push(clA[kA]);
                 }
-                for (var k3 = 0; k3 < cl3.length; k3++) all.push(cl3[k3]);
             }
-            if (all.length) jobs.push({ s: s, e: e, clips: all });
-        }
-
-        for (i = jobs.length - 1; i >= 0; i--) {
-            var job = jobs[i];
-            for (var L = 0; L < job.clips.length; L++) {
+            if (partial) {
+                err("ABORTADO: en el rango " + s.toFixed(1) + "-" + e.toFixed(1) + "s hay un clip en " + partial.tr +
+                    " que cubre [" + partial.st.toFixed(2) + "-" + partial.en.toFixed(2) + "] y NO fue cortado por el razor" +
+                    " (¿pista bloqueada?). NADA se ha borrado. Avisame con este texto.");
+                aborted = true;
+                break;
+            }
+            if (!all.length) continue;
+            for (var L = 0; L < all.length; L++) {
                 var isFirst = (L === 0);
-                try { job.clips[L].remove(isFirst, !isFirst); res.removed++; }
+                try { all[L].remove(isFirst, !isFirst); res.removed++; }
                 catch (eR) {
-                    try { job.clips[L].remove(false, true); res.removed++; }
-                    catch (eR2) { err("borrar @" + job.s.toFixed(1) + "s: " + eR2); }
+                    try { all[L].remove(false, true); res.removed++; }
+                    catch (eR2) { err("borrar @" + s.toFixed(1) + "s: " + eR2); }
                 }
             }
         }
+        if (aborted) return J(res);
 
         var acc = 0;
         for (i = 0; i < ranges.length; i++) {
