@@ -387,7 +387,11 @@ function CN_extract(batchJson) {
             for (t2 = 0; t2 < seq.audioTracks.numTracks; t2++) {
                 var cl3 = clipsIn(seq.audioTracks[t2], s, e);
                 if (!tiles(cl3, s, e)) {
-                    err("PRE-CHECK: A" + (t2 + 1) + " no queda exactamente cortada. NADA borrado: Cmd+Z y avisame.");
+                    var detA = [];
+                    for (var k5 = 0; k5 < cl3.length; k5++)
+                        detA.push("[" + cl3[k5].start.seconds.toFixed(2) + "-" + cl3[k5].end.seconds.toFixed(2) + "]" + (cl3[k5].mediaType === 1 ? "(video)" : ""));
+                    err("PRE-CHECK A" + (t2 + 1) + " en " + s.toFixed(1) + "-" + e.toFixed(1) + "s: clips: " +
+                        (cl3.length ? detA.join(" ") : "NINGUNO") + " — NADA borrado.");
                     return J(res);
                 }
                 for (var k3 = 0; k3 < cl3.length; k3++) all.push(cl3[k3]);
