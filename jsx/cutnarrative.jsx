@@ -549,34 +549,68 @@ function CN_readMarkers() {
     } catch (e) { res.error = e.toString(); return J(res); }
 }
 
-/* v7.5: batch por categoria — un clon + un extract por categoria (payload simple) */
+/* v7.12: batch por categoria — FUENTE FIJA (no clona clones) + DRY RUN + markers con duracion en nombre si el rango no se puede
+   payload: { categories: [{name, ranges}], sourceName, dry } */
 function CN_buildCategoryBatch(batchJson) {
-    var res = { ok: false, created: 0, seqs: [], errors: [] };
+    var res = { ok: false, created: 0, seqs: [], errors: [], dry: false };
     function err(m) { res.errors.push(String(m)); }
     try {
-        // v7.9: el argumento llega YA COMO OBJETO (evalScript evalua) — usarlo directo
         var batch = batchJson;
-        if (typeof batch === "string") {
-            try { batch = eval("(" + batch + ")"); } catch (eB) { batch = null; }
+        if (typeof batch === "string") { try { batch = eval("(" + batch + ")"); } catch (eB) { batch = null; } }
+        if (!batch || typeof batch !== "object" || !batch.categories) { err("Batch ilegible"); return J(res); }
+        var cats = batch.categories;
+        var dry = !!batch.dry;
+
+        // fuente FIJA: por nombre si viene, si no la activa
+        var src = null;
+        var srcName = batch.sourceName || "";
+        if (srcName) {
+            for (var s = 0; s < app.project.sequences.numSequences; s++) {
+                if (app.project.sequences[s].name === srcName) { src = app.project.sequences[s]; break; }
+            }
         }
-        if (!batch || typeof batch !== "object" || !batch.categories) {
-            err("Batch ilegible: " + typeof batch);
+        if (!src) src = app.project.activeSequence;
+        if (!src) { err("No hay secuencia fuente"); return J(res); }
+        res.source = src.name;
+
+        var srcEnd = computeRealEnd(src);
+        if (!isFinite(srcEnd) || srcEnd <= 0) { err("No pude leer la duracion de la fuente"); return J(res); }
+
+        // validacion de todas las categorias primero (en seco)
+        for (var v = 0; v < cats.length; v++) {
+            var catv = cats[v];
+            var rgv = catv.ranges;
+            if (typeof rgv === "string") { try { rgv = JSON.parse(rgv); } catch (eV1) { rgv = null; } }
+            if (!rgv || !rgv.length) { err(catv.name + ": 0 rangos"); continue; }
+            for (var k = 0; k < rgv.length; k++) {
+                if (rgv[k].e > srcEnd + TOL_EXTRACT) {
+                    err(catv.name + ": el bloque " + (k + 1) + " acaba en " + rgv[k].e.toFixed(1) + "s pero la fuente dura " + srcEnd.toFixed(1) + "s");
+                    return J(res);
+                }
+            }
+        }
+
+        if (dry) {
+            res.dry = true;
+            res.cats = [];
+            for (var d = 0; d < cats.length; d++) {
+                var rgd = cats[d].ranges;
+                if (typeof rgd === "string") { try { rgd = JSON.parse(rgd); } catch (eV2) { rgd = []; } }
+                var tot = 0;
+                for (var k2 = 0; k2 < rgd.length; k2++) tot += rgd[k2].e - rgd[k2].s;
+                res.cats.push({ name: cats[d].name, blocks: rgd.length, dur: Math.round(tot * 100) / 100 });
+            }
+            res.ok = true;
+            res.note = "SIMULACION: no se ha tocado nada";
             return J(res);
         }
-        var cats = batch.categories;
 
+        // real: por cada categoria, RE-ACTIVAR la fuente (nunca clonar clones)
         for (var c = 0; c < cats.length; c++) {
             var cat = cats[c];
-            // normalizar ranges: pueden llegar como string JSON, array, o undefined
-            var rg = cat.ranges;
-            if (typeof rg === "string") { try { rg = eval("(" + rg + ")"); } catch (eR) { rg = null; } }
-            if (!rg || typeof rg.length !== "number") {
-                err(cat.name + ": rangos ilegibles (" + typeof rg + ")");
-                continue;
-            }
-            cat.ranges = rg;
-            var src = app.project.activeSequence;
-            if (!src) { err("No hay secuencia activa"); continue; }
+            var rgc = cat.ranges;
+            if (typeof rgc === "string") { try { rgc = JSON.parse(rgc); } catch (eV3) { continue; } }
+            try { app.project.activeSequence = src; } catch (eAct) {}
             var cl = null;
             try { cl = src.clone(); } catch (e1) {}
             if (!cl) { try { cl = app.project.createNewSequenceFromSequence(src.name + " t", src); } catch (e2) {} }
@@ -585,22 +619,16 @@ function CN_buildCategoryBatch(batchJson) {
             try { cl.name = newName; } catch (eN) {}
             try { app.project.activeSequence = cl; } catch (eA) {}
 
-            // extract con payload SIMPLE + verificacion de lo recibido
-            var nRanges = (cat.ranges || []).length;
-            var resumen = [];
-            for (var rv = 0; rv < nRanges; rv++) {
-                try { resumen.push(cat.ranges[rv].s.toFixed(1) + "-" + cat.ranges[rv].e.toFixed(1)); } catch (eRV) {}
-            }
-            var payload = { ranges: cat.ranges, rangeMarkers: true };
+            var payload = { ranges: rgc, rangeMarkers: true };
             var r = eval("(" + CN_extract(JSON.stringify(payload)) + ")");
-            var recibe = (r && typeof r.segsRecibidos !== 'undefined') ? r.segsRecibidos : '?';
             if (r && r.ok) {
                 res.created++;
-                res.seqs.push({ name: newName, markers: r.markers, dur: r.dur1, rangosEnviados: nRanges, rangosRecibidos: recibe });
+                res.seqs.push({ name: newName, markers: r.markers, dur: r.dur1 });
             } else {
-                err(newName + " (enviados " + nRanges + " [" + resumen.join(",") + "], recibidos " + recibe + "): " + ((r && r.errors) ? r.errors.join(" | ") : "sin respuesta"));
+                err(newName + ": " + ((r && r.errors) ? r.errors.join(" | ") : "extract sin respuesta"));
             }
         }
+        try { app.project.activeSequence = src; } catch (eBack) {}
         res.ok = res.created > 0;
         return J(res);
     } catch (e) {
