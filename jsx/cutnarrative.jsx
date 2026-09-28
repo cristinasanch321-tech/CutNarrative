@@ -588,7 +588,9 @@ function CN_buildCategoryBatch(batchJson) {
             // extract con payload SIMPLE + verificacion de lo recibido
             var nRanges = (cat.ranges || []).length;
             var resumen = [];
-            (cat.ranges || []).forEach(function (rg) { resumen.push(rg.s.toFixed(1) + "-" + rg.e.toFixed(1)); });
+            for (var rv = 0; rv < nRanges; rv++) {
+                try { resumen.push(cat.ranges[rv].s.toFixed(1) + "-" + cat.ranges[rv].e.toFixed(1)); } catch (eRV) {}
+            }
             var payload = { ranges: cat.ranges, rangeMarkers: true };
             var r = eval("(" + CN_extract(JSON.stringify(payload)) + ")");
             var recibe = (r && typeof r.segsRecibidos !== 'undefined') ? r.segsRecibidos : '?';
