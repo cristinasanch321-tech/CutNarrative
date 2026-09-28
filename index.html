@@ -754,7 +754,10 @@ CATEGORIA: REEL
                 if (busy) return;
                 let categories = [];
                 if (pasteCategories && pasteCategories.length) {
-                    pasteCategories.forEach(c => categories.push({ name: c.name, ranges: c.ranges.map(rg => ({ s: rg.s, e: rg.e, note: rg.note })) }));
+                    pasteCategories.forEach(c => categories.push({
+                        name: c.name,
+                        ranges: JSON.stringify(c.ranges.map(rg => ({ s: rg.s, e: rg.e, note: rg.note })))
+                    }));
                 } else if (readMks.length) {
                     const chosen = [];
                     document.querySelectorAll('#mkCats input[type=checkbox]').forEach(cb => {
@@ -772,7 +775,7 @@ CATEGORIA: REEL
                             const e = (i + 1 < arr.length) ? Math.max(s + 0.5, arr[i + 1].t - pre) : (arr[i].t + post);
                             ranges.push({ s: s, e: e, note: arr[i].name || (nm + ' ' + (i + 1)) });
                         }
-                        categories.push({ name: nm, ranges: ranges });
+                        categories.push({ name: nm, ranges: JSON.stringify(ranges) });
                     });
                 } else { setStatus('Pega tabla (📥) o lee markers (📖).', 'err'); return; }
                 setBusy(true);
