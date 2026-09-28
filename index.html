@@ -777,7 +777,7 @@ CATEGORIA: REEL
                 } else { setStatus('Pega tabla (📥) o lee markers (📖).', 'err'); return; }
                 setBusy(true);
                 setStatus('Creando ' + categories.length + ' secuencia(s)...');
-                cs.evalScript('CN_buildCategoryBatch(' + JSON.stringify(JSON.stringify({ categories: categories })) + ')', (res) => {
+                cs.evalScript('CN_buildCategoryBatch(' + JSON.stringify({ categories: categories }) + ')', (res) => {
                     let r = null; try { r = JSON.parse(res); } catch (e) {}
                     setBusy(false);
                     if (r && r.ok) {

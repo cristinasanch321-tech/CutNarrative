@@ -554,12 +554,25 @@ function CN_buildCategoryBatch(batchJson) {
     var res = { ok: false, created: 0, seqs: [], errors: [] };
     function err(m) { res.errors.push(String(m)); }
     try {
-        var batch = eval("(" + batchJson + ")");
+        var batch = null;
+        try { batch = eval("(" + batchJson + ")"); } catch (eB1) { batch = null; }
+        if (batch === null || typeof batch === "string") {
+            try { batch = eval("(" + batch + ")"); } catch (eB2) { batch = null; }
+        }
+        if (!batch || typeof batch !== "object") { err("Batch ilegible"); return J(res); }
         var cats = batch.categories || [];
         if (!cats.length) { err("Sin categorias"); return J(res); }
 
         for (var c = 0; c < cats.length; c++) {
             var cat = cats[c];
+            // normalizar ranges: pueden llegar como string JSON, array, o undefined
+            var rg = cat.ranges;
+            if (typeof rg === "string") { try { rg = eval("(" + rg + ")"); } catch (eR) { rg = null; } }
+            if (!rg || typeof rg.length !== "number") {
+                err(cat.name + ": rangos ilegibles (" + typeof rg + ")");
+                continue;
+            }
+            cat.ranges = rg;
             var src = app.project.activeSequence;
             if (!src) { err("No hay secuencia activa"); continue; }
             var cl = null;
