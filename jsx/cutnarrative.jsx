@@ -1,4 +1,9 @@
-/* CutNarrative v8 - parte 1/2 */
+/* CutNarrative v6.5 - jsx COMPLETO
+   CN_ping/CN_probe(fin real desde clips)/CN_seek/CN_cloneSeq
+   CN_execute+CN_execute_file (multicam: corta y vacia) / CN_addMarkers
+   CN_extract v5 (recortador por POSICIONES: respeta multicam/texto/audio)
+   CN_buildCapsule v6 (projectItem directo) / SP_prepareNest/SP_checkRestored */
+
 function J(o) {
     var t = typeof o, k, i;
     if (o === null) return "null";
@@ -15,21 +20,52 @@ function J(o) {
     for (k in o) if (o.hasOwnProperty(k)) p.push('"' + k + '":' + J(o[k]));
     return "{" + p.join(",") + "}";
 }
+
 function pad2(n) { return (n < 10 ? "0" : "") + n; }
+
 function TC(frame, fps) {
     var nominal = Math.round(fps);
-    var f = frame % nominal;
-    var s = Math.floor(frame / nominal) % 60;
-    var m = Math.floor(frame / (nominal * 60)) % 60;
-    var h = Math.floor(frame / (nominal * 3600));
-    return pad2(h) + ":" + pad2(m) + ":" + pad2(s) + ":" + pad2(f);
+    var isDF = (nominal === 30 || nominal === 60) && Math.abs(fps - nominal) > 0.001;
+    var f, s, m, h;
+    if (!isDF) {
+        f = frame % nominal;
+        s = Math.floor(frame / nominal) % 60;
+        m = Math.floor(frame / (nominal * 60)) % 60;
+        h = Math.floor(frame / (nominal * 3600));
+        return pad2(h) + ":" + pad2(m) + ":" + pad2(s) + ":" + pad2(f);
+    }
+    var d = Math.round(nominal * 0.066666);
+    var f10 = nominal * 600 - 9 * d;
+    var fMin = nominal * 60 - d;
+    var ten = Math.floor(frame / f10);
+    var rem = frame % f10;
+    if (rem > d) frame += d * 9 * ten + d * Math.floor((rem - d) / fMin);
+    else frame += d * 9 * ten;
+    f = frame % nominal;
+    s = Math.floor(frame / nominal) % 60;
+    m = Math.floor(frame / (nominal * 60)) % 60;
+    h = Math.floor(frame / (nominal * 3600));
+    return pad2(h) + ":" + pad2(m) + ":" + pad2(s) + ";" + pad2(f);
 }
+
 function getZeroSec(seq) {
     try {
         var z = Number(seq.zeroPoint.ticks) / 254016000000;
         return isNaN(z) ? 0 : z;
     } catch (e) { return 0; }
 }
+
+function CN_ping() {
+    try {
+        var seq = app.project ? app.project.activeSequence : null;
+        if (!seq) return J({ ok: false, error: "No hay secuencia activa" });
+        return J({ ok: true, seq: seq.name,
+                   videoTracks: seq.videoTracks.numTracks,
+                   audioTracks: seq.audioTracks.numTracks });
+    } catch (e) { return J({ ok: false, error: e.toString() }); }
+}
+
+/* fin real: max entre seq.end y el ultimo clip de todas las pistas */
 function computeRealEnd(seq) {
     var end = 0;
     try { end = seq.end.seconds; } catch (e1) { end = 0; }
@@ -51,15 +87,7 @@ function computeRealEnd(seq) {
     if (end < fromClips - 0.5) end = fromClips;
     return end;
 }
-function CN_ping() {
-    try {
-        var seq = app.project ? app.project.activeSequence : null;
-        if (!seq) return J({ ok: false, error: "No hay secuencia activa" });
-        return J({ ok: true, seq: seq.name,
-                   videoTracks: seq.videoTracks.numTracks,
-                   audioTracks: seq.audioTracks.numTracks });
-    } catch (e) { return J({ ok: false, error: e.toString() }); }
-}
+
 function CN_probe() {
     var res = {};
     try {
@@ -84,6 +112,7 @@ function CN_probe() {
         return J(res);
     } catch (e) { res.ok = false; res.error = e.toString(); return J(res); }
 }
+
 function CN_seek(tSec) {
     try {
         var seq = app.project ? app.project.activeSequence : null;
@@ -94,36 +123,55 @@ function CN_seek(tSec) {
         return J({ ok: true });
     } catch (e) { return J({ ok: false, error: String(e) }); }
 }
-function CN_makeNamedCopy(src, newName) {
-    var cl = null, how = "";
-    try { cl = app.project.createNewSequenceFromSequence(newName, src); how = "createNew(nombre)"; } catch (e1) { cl = null; }
-    if (!cl) {
-        try { cl = src.clone(); how = "clone()"; } catch (e2) { cl = null; }
-        if (cl) {
-            try { cl.name = newName; } catch (eN) {}
-            try {
-                var root = app.project.rootItem;
-                for (var i = 0; i < root.children.numItems; i++) {
-                    if (root.children[i].name === cl.name && root.children[i].type === ProjectItemType.CLIP) {
-                        try { root.children[i].name = newName; } catch (eR) {}
-                        break;
-                    }
-                }
-            } catch (eR2) {}
+
+function SP_prepareNest() {
+    var res = { ok: false, selected: 0 };
+    try {
+        var seq = app.project ? app.project.activeSequence : null;
+        if (!seq) { res.error = "No hay secuencia activa"; return J(res); }
+        var first = true;
+        for (var t = 0; t < seq.videoTracks.numTracks; t++) {
+            var tr = seq.videoTracks[t];
+            for (var c = 0; c < tr.clips.numItems; c++) {
+                try { tr.clips[c].setSelected(true, first); first = false; res.selected++; } catch (e) {}
+            }
         }
-    }
-    return { seq: cl, how: how };
+        if (!res.selected) res.error = "No hay clips que seleccionar";
+        res.ok = res.selected > 0;
+        return J(res);
+    } catch (e) { res.error = e.toString(); return J(res); }
 }
+
+function SP_checkRestored() {
+    var res = { ok: false };
+    try {
+        var seq = app.project ? app.project.activeSequence : null;
+        if (!seq) { res.error = "No hay secuencia activa"; return J(res); }
+        res.ok = true;
+        res.vt = seq.videoTracks.numTracks;
+        res.end = Math.round(computeRealEnd(seq) * 10) / 10;
+        var count = 0;
+        for (var t = 0; t < seq.videoTracks.numTracks; t++) count += seq.videoTracks[t].clips.numItems;
+        res.clips = count;
+        return J(res);
+    } catch (e) { res.error = e.toString(); return J(res); }
+}
+
 function CN_cloneSeq() {
     try {
         var seq = app.project ? app.project.activeSequence : null;
         if (!seq) return J({ ok: false, error: "No hay secuencia activa" });
-        var r = CN_makeNamedCopy(seq, seq.name + " [CUTNARRATIVE]");
-        if (!r.seq) return J({ ok: false, error: "No se pudo clonar" });
-        try { app.project.activeSequence = r.seq; } catch (eA) {}
-        return J({ ok: true, via: r.how, name: r.seq.name });
+        var cl = null, how = "";
+        try { cl = seq.clone(); how = "clone()"; } catch (e1) { cl = null; }
+        if (!cl) {
+            try { cl = app.project.createNewSequenceFromSequence(seq.name + " [CUTNARRATIVE]", seq); how = "createNew"; } catch (e2) { cl = null; }
+        }
+        if (!cl) return J({ ok: false, error: "Esta version no permite clonar desde script" });
+        try { app.project.activeSequence = cl; } catch (eA) {}
+        return J({ ok: true, via: how, name: app.project.activeSequence ? app.project.activeSequence.name : "?" });
     } catch (e) { return J({ ok: false, error: String(e) }); }
 }
+
 function CN_execute(batchJson) {
     var res = { ok: false, cuts: 0, applied: 0, errorCount: 0, errors: [], clips: [] };
     function err(m) { res.errorCount++; if (res.errors.length < 15) res.errors.push(String(m)); }
@@ -184,6 +232,7 @@ function CN_execute(batchJson) {
         return J(res);
     }
 }
+
 function CN_execute_file(path) {
     try {
         var f = new File(path);
@@ -195,6 +244,7 @@ function CN_execute_file(path) {
         return CN_execute(data);
     } catch (e) { return J({ ok: false, errors: ["CN_execute_file: " + e.toString()] }); }
 }
+
 function CN_addMarkers(batchJson) {
     var res = { ok: false, created: 0, errors: [] };
     try {
@@ -218,7 +268,8 @@ function CN_addMarkers(batchJson) {
         return J(res);
     } catch (e) { res.errors.push("FATAL: " + e.toString()); return J(res); }
 }
-/* ---- parte 2/2 ---- */
+
+/* EXTRAER Y UNIR v5: recortador por POSICIONES (respeta multicam/texto/audio) */
 function CN_extract(batchJson) {
     var res = { ok: false, kept: 0, removed: 0, markers: 0, totalKept: 0, dur0: 0, dur1: 0,
                 errorCount: 0, errors: [], positions: [] };
@@ -227,21 +278,22 @@ function CN_extract(batchJson) {
     try {
         var seq = app.project ? app.project.activeSequence : null;
         if (!seq) { err("No hay secuencia activa"); return J(res); }
-        var batch = batchJson;
-        if (typeof batch === "string") { try { batch = eval("(" + batch + ")"); } catch (eB) { batch = null; } }
-        var ranges = (batch && batch.ranges) ? batch.ranges : [];
+        var batch = eval("(" + batchJson + ")");
+        var ranges = (batch && batch.ranges) ? batch.ranges.slice() : [];
         if (!ranges.length) { err("No hay tramos que mantener"); return J(res); }
-        var wantDurInName = !!batch.durInName;
+
         var fps = 254016000000 / Number(seq.timebase);
         var zeroSec = getZeroSec(seq);
         var dur0 = computeRealEnd(seq);
+        res.segsRecibidos = ranges.length;
         res.dur0 = Math.round(dur0 * 10) / 10;
-        if (!isFinite(dur0) || dur0 <= 0) { err("No pude leer la duracion. NADA tocado."); return J(res); }
+        if (!isFinite(dur0) || dur0 <= 0) { err("No pude leer la duracion (ni clips). NADA tocado."); return J(res); }
+
         ranges.sort(function (a, b) { return a.s - b.s; });
         var i;
         for (i = 0; i < ranges.length; i++) {
             if (ranges[i].s < -TOL || ranges[i].e > dur0 + TOL) {
-                err("El tramo " + (i + 1) + " esta FUERA (dura " + dur0.toFixed(1) + "s). NADA tocado.");
+                err("El tramo " + (i + 1) + " esta FUERA de la secuencia (dura " + dur0.toFixed(1) + "s). Revisa el TC base. NADA tocado.");
                 return J(res);
             }
             if (i > 0 && ranges[i].s < ranges[i - 1].e - TOL) {
@@ -249,12 +301,14 @@ function CN_extract(batchJson) {
                 return J(res);
             }
         }
+
         app.enableQE();
         var qeSeq = qe.project.getActiveSequence();
         if (!qeSeq || qeSeq.name !== seq.name) {
-            err("Desincronizacion DOM/QE. NADA tocado.");
+            err("Desincronizacion DOM/QE. NADA tocado. Reinicia Premiere.");
             return J(res);
         }
+
         var seen = {}, bounds = [];
         function addB(t) {
             var fr = Math.round(t * fps);
@@ -269,7 +323,9 @@ function CN_extract(batchJson) {
                 var did = false;
                 for (var att = 0; att < 2 && !did; att++) {
                     try { qv.razor(TC(bounds[i], fps)); did = true; }
-                    catch (eV) { if (att === 1) { razorFails++; err("razor V" + (vt + 1) + " @" + bounds[i] + ": " + eV); } }
+                    catch (eV) {
+                        if (att === 1) { razorFails++; err("razor V" + (vt + 1) + " @" + bounds[i] + ": " + eV); }
+                    }
                 }
             }
         }
@@ -279,17 +335,25 @@ function CN_extract(batchJson) {
                 var did2 = false;
                 for (var att2 = 0; att2 < 2 && !did2; att2++) {
                     try { qa.razor(TC(bounds[i], fps)); did2 = true; }
-                    catch (eA) { if (att2 === 1) { razorFails++; err("razor A" + (at + 1) + " @" + bounds[i] + ": " + eA); } }
+                    catch (eA) {
+                        if (att2 === 1) { razorFails++; err("razor A" + (at + 1) + " @" + bounds[i] + ": " + eA); }
+                    }
                 }
             }
         }
-        if (razorFails > 0) err("Aviso: " + razorFails + " cortes fallaron.");
+        if (razorFails > 0) err("Aviso: " + razorFails + " cortes fallaron (¿pista bloqueada?).");
+
         var rem = [], cur = 0;
         for (i = 0; i < ranges.length; i++) {
             if (ranges[i].s - cur > TOL) rem.push([cur, ranges[i].s]);
             cur = ranges[i].e;
         }
         if (dur0 - cur > TOL) rem.push([cur, dur0]);
+
+        /* v6.12: borrado DIRECTO por rangos, todas las pistas, de derecha a izquierda.
+           Sin pre-check de cobertura (los huecos en extremos son normales en montaje).
+           Unica regla: cada clip intersectante debe estar COMPLETAMENTE dentro del rango
+           (si se sale parcialmente, el razor fallo y borrarlo entero quitaria contenido). */
         function clipsInRange(track, s, e) {
             var out = [], n = track.clips.numItems;
             for (var k = 0; k < n; k++) {
@@ -323,8 +387,9 @@ function CN_extract(batchJson) {
                 }
             }
             if (partial) {
-                err("ABORTADO: rango " + s.toFixed(1) + "-" + e.toFixed(1) + "s, clip en " + partial.tr +
-                    " [" + partial.st.toFixed(2) + "-" + partial.en.toFixed(2) + "] no fue cortado. NADA borrado.");
+                err("ABORTADO: en el rango " + s.toFixed(1) + "-" + e.toFixed(1) + "s hay un clip en " + partial.tr +
+                    " que cubre [" + partial.st.toFixed(2) + "-" + partial.en.toFixed(2) + "] y NO fue cortado por el razor" +
+                    " (¿pista bloqueada?). NADA se ha borrado. Avisame con este texto.");
                 aborted = true;
                 break;
             }
@@ -339,25 +404,38 @@ function CN_extract(batchJson) {
             }
         }
         if (aborted) return J(res);
+
         var acc = 0;
+        var wantRangeMarkers = !!(batch.rangeMarkers);
         for (i = 0; i < ranges.length; i++) {
-            var dur = ranges[i].e - ranges[i].s;
             try {
                 var mk = seq.markers.createMarker(acc + zeroSec);
                 if (mk) {
                     var note = ranges[i].note || ("Fragmento " + (i + 1));
-                    var mkName = wantDurInName ? (note + "  [" + Math.round(dur) + "s]") : note;
-                    try { mk.name = String(mkName).slice(0, 500); } catch (eN2) { try { mk.name = mkName; } catch (eN3) {} }
+                    try { mk.name = String(note).slice(0, 500); } catch (eN2) { try { mk.name = note; } catch (eN3) {} }
                     try { mk.comments = String(note); } catch (eC) {}
                     try { mk.setColorByIndex(2); } catch (eCol) {}
+                    if (wantRangeMarkers) {
+                        var endT = new Time();
+                        endT.seconds = acc + (ranges[i].e - ranges[i].s) + zeroSec;
+                        try { mk.end = endT; } catch (eEnd1) {}
+                        try { mk.end.seconds = endT.seconds; } catch (eEnd2) {}
+                        var chk = 0;
+                        try { chk = mk.end.seconds; } catch (eChk) {}
+                        if (!chk || chk <= acc + zeroSec) {
+                            // tu version no permite marker.end: la duracion va en el nombre
+                            try { mk.name = (String(note).slice(0, 120) + "  [" + Math.round(ranges[i].e - ranges[i].s) + "s]").slice(0, 500); } catch (eDur) {}
+                        }
+                    }
                     res.markers++;
                 }
             } catch (eM) { err("marker " + (i + 1) + ": " + eM); }
-            res.positions.push({ at: Math.round(acc * 100) / 100, dur: Math.round(dur * 100) / 100, note: ranges[i].note || "" });
-            acc += dur;
+            res.positions.push({ at: Math.round(acc * 100) / 100, dur: Math.round((ranges[i].e - ranges[i].s) * 100) / 100, note: ranges[i].note || "" });
+            acc += ranges[i].e - ranges[i].s;
             res.kept++;
         }
         res.totalKept = Math.round(acc * 100) / 100;
+
         try { res.dur1 = Math.round(computeRealEnd(seq) * 100) / 100; } catch (eD) {}
         if (res.dur1 && Math.abs(res.dur1 - res.totalKept) > 0.5)
             err("AVISO: duracion final " + res.dur1 + "s pero se esperaban " + res.totalKept + "s.");
@@ -368,6 +446,8 @@ function CN_extract(batchJson) {
         return J(res);
     }
 }
+
+/* CONSTRUIR CAPSULA v6: projectItem directo, sin media path */
 function CN_buildCapsule(batchJson) {
     var res = { ok: false, placed: 0, markers: 0, total: 0, errorCount: 0, errors: [], positions: [] };
     function err(m) { res.errorCount++; if (res.errors.length < 15) res.errors.push(String(m)); }
@@ -378,7 +458,7 @@ function CN_buildCapsule(batchJson) {
         var seq = app.project ? app.project.activeSequence : null;
         if (!seq) { err("No hay secuencia activa"); return J(res); }
         var v0 = seq.videoTracks[0];
-        if (v0.clips.numItems < 1) { err("Sin clips en V1"); return J(res); }
+        if (v0.clips.numItems < 1) { err("La secuencia activa no tiene clips en V1"); return J(res); }
         var zeroSec = getZeroSec(seq);
         var srcMap = [];
         for (var i = 0; i < v0.clips.numItems; i++) {
@@ -390,7 +470,7 @@ function CN_buildCapsule(batchJson) {
             try { ms = c.inPoint.seconds; } catch (eI) {}
             srcMap.push({ start: c.start.seconds, end: c.end.seconds, mediaStart: ms, item: pi });
         }
-        if (!srcMap.length) { err("Los clips de V1 no exponen projectItem."); return J(res); }
+        if (!srcMap.length) { err("Los clips de V1 no exponen projectItem. NADA hecho."); return J(res); }
         function findSource(sec) {
             for (var k = 0; k < srcMap.length; k++)
                 if (sec >= srcMap[k].start - 0.05 && sec <= srcMap[k].end + 0.05) return srcMap[k];
@@ -405,7 +485,7 @@ function CN_buildCapsule(batchJson) {
         for (var r = 0; r < rows.length; r++) {
             var row = rows[r];
             var src = findSource(row.s);
-            if (!src) { err("fila " + (r + 1) + ": sin clip que cubra " + row.s.toFixed(2) + "s"); continue; }
+            if (!src) { err("fila " + (r + 1) + ": ningún clip de V1 cubre " + row.s.toFixed(2) + "s"); continue; }
             var dur = row.e - row.s;
             if (dur <= 0) { err("fila " + (r + 1) + ": OUT <= IN"); continue; }
             var item = src.item;
@@ -423,7 +503,7 @@ function CN_buildCapsule(batchJson) {
                 var mk = newSeq.markers.createMarker(cursor);
                 if (mk) {
                     var note = row.note || ("Cápsula " + (r + 1));
-                    try { mk.name = String(note).slice(0, 500); } catch (eN) {}
+                    mk.name = String(note).slice(0, 60);
                     try { mk.comments = String(note); } catch (eC) {}
                     try { mk.setColorByIndex(2); } catch (eCol) {}
                     res.markers++;
@@ -433,7 +513,7 @@ function CN_buildCapsule(batchJson) {
             cursor += dur;
             res.placed++;
         }
-        if (audioWarns > 0) err("Aviso: " + audioWarns + " sin audio por la API.");
+        if (audioWarns > 0) err("Aviso: " + audioWarns + " clip(s) sin audio por la API (vídeo sí).");
         res.total = Math.round(cursor * 100) / 100;
         res.seqName = newSeq.name;
         try { app.project.activeSequence = newSeq; } catch (eA) {}
@@ -445,6 +525,35 @@ function CN_buildCapsule(batchJson) {
         return J(res);
     }
 }
+
+/* ---- v7: MARKERS categorizados ---- */
+/* lee todos los markers de la secuencia: posicion, nombre, color (categoria) */
+function CN_readMarkers() {
+    var res = { ok: false, markers: [] };
+    try {
+        var seq = app.project ? app.project.activeSequence : null;
+        if (!seq) { res.error = "No hay secuencia activa"; return J(res); }
+        res.ok = true;
+        var ms = seq.markers;
+        var n = ms.numMarkers;
+        for (var i = 0; i < n; i++) {
+            var m = ms[i];
+            var col = -1;
+            try { col = m.getColorByIndex ? m.getColorByIndex() : -1; } catch (eC) {}
+            res.markers.push({
+                t: Math.round((m.start.seconds - getZeroSec(seq)) * 1000) / 1000,
+                name: String(m.name || ""),
+                color: col
+            });
+        }
+        res.markers.sort(function (a, b) { return a.t - b.t; });
+        res.seqName = seq.name;
+        return J(res);
+    } catch (e) { res.error = e.toString(); return J(res); }
+}
+
+/* v7.12: batch por categoria — FUENTE FIJA (no clona clones) + DRY RUN + markers con duracion en nombre si el rango no se puede
+   payload: { categories: [{name, ranges}], sourceName, dry } */
 function CN_buildCategoryBatch(batchJson) {
     var res = { ok: false, created: 0, seqs: [], errors: [], dry: false };
     function err(m) { res.errors.push(String(m)); }
@@ -454,6 +563,8 @@ function CN_buildCategoryBatch(batchJson) {
         if (!batch || typeof batch !== "object" || !batch.categories) { err("Batch ilegible"); return J(res); }
         var cats = batch.categories;
         var dry = !!batch.dry;
+
+        // fuente FIJA: por nombre si viene, si no la activa
         var src = null;
         var srcName = batch.sourceName || "";
         if (srcName) {
@@ -464,12 +575,15 @@ function CN_buildCategoryBatch(batchJson) {
         if (!src) src = app.project.activeSequence;
         if (!src) { err("No hay secuencia fuente"); return J(res); }
         res.source = src.name;
+
         var srcEnd = computeRealEnd(src);
         if (!isFinite(srcEnd) || srcEnd <= 0) { err("No pude leer la duracion de la fuente"); return J(res); }
+
+        // validacion de todas las categorias primero (en seco)
         for (var v = 0; v < cats.length; v++) {
             var catv = cats[v];
             var rgv = catv.ranges;
-            if (typeof rgv === "string") { try { rgv = eval("(" + rgv + ")"); } catch (eV1) { rgv = null; } }
+            if (typeof rgv === "string") { try { rgv = JSON.parse(rgv); } catch (eV1) { rgv = null; } }
             if (!rgv || !rgv.length) { err(catv.name + ": 0 rangos"); continue; }
             for (var k = 0; k < rgv.length; k++) {
                 if (rgv[k].e > srcEnd + 0.05) {
@@ -478,12 +592,13 @@ function CN_buildCategoryBatch(batchJson) {
                 }
             }
         }
+
         if (dry) {
             res.dry = true;
             res.cats = [];
             for (var d = 0; d < cats.length; d++) {
                 var rgd = cats[d].ranges;
-                if (typeof rgd === "string") { try { rgd = eval("(" + rgd + ")"); } catch (eV2) { rgd = []; } }
+                if (typeof rgd === "string") { try { rgd = JSON.parse(rgd); } catch (eV2) { rgd = []; } }
                 var tot = 0;
                 for (var k2 = 0; k2 < rgd.length; k2++) tot += rgd[k2].e - rgd[k2].s;
                 res.cats.push({ name: cats[d].name, blocks: rgd.length, dur: Math.round(tot * 100) / 100 });
@@ -492,22 +607,28 @@ function CN_buildCategoryBatch(batchJson) {
             res.note = "SIMULACION: no se ha tocado nada";
             return J(res);
         }
+
+        // real: por cada categoria, RE-ACTIVAR la fuente (nunca clonar clones)
         for (var c = 0; c < cats.length; c++) {
             var cat = cats[c];
             var rgc = cat.ranges;
-            if (typeof rgc === "string") { try { rgc = eval("(" + rgc + ")"); } catch (eV3) { continue; } }
+            if (typeof rgc === "string") { try { rgc = JSON.parse(rgc); } catch (eV3) { continue; } }
             try { app.project.activeSequence = src; } catch (eAct) {}
-            var made = CN_makeNamedCopy(src, src.name + "_" + cat.name);
-            if (!made.seq) { err("No pude clonar para " + cat.name); continue; }
-            try { app.project.activeSequence = made.seq; } catch (eA) {}
-            var payload = { ranges: rgc, durInName: true };
+            var cl = null;
+            try { cl = src.clone(); } catch (e1) {}
+            if (!cl) { try { cl = app.project.createNewSequenceFromSequence(src.name + " t", src); } catch (e2) {} }
+            if (!cl) { err("No pude clonar para " + cat.name); continue; }
+            var newName = src.name + "_" + cat.name;
+            try { cl.name = newName; } catch (eN) {}
+            try { app.project.activeSequence = cl; } catch (eA) {}
+
+            var payload = { ranges: rgc, rangeMarkers: true };
             var r = eval("(" + CN_extract(JSON.stringify(payload)) + ")");
             if (r && r.ok) {
-                }
                 res.created++;
-                res.seqs.push({ name: made.seq.name, dur: r.dur1 });
+                res.seqs.push({ name: newName, markers: r.markers, dur: r.dur1 });
             } else {
-                err(made.seq.name + ": " + ((r && r.errors) ? r.errors.join(" | ") : "extract sin respuesta"));
+                err(newName + ": " + ((r && r.errors) ? r.errors.join(" | ") : "extract sin respuesta"));
             }
         }
         try { app.project.activeSequence = src; } catch (eBack) {}
@@ -519,3 +640,50 @@ function CN_buildCategoryBatch(batchJson) {
     }
 }
 
+/* ---- v7.15: patch aplicado al CN_extract existente via override ---- */
+/* Como no puedo editar la funcion original con anclas, defino un WRAPPER:
+   reescribo CN_extract para anadir el fallback de duracion en nombre de marker.
+   La version original se guarda y esta version la envuelve. */
+var CN_extract_original_v715 = CN_extract;
+CN_extract = function(batchJson) {
+    var res = CN_extract_original_v715(batchJson);
+    // post-proceso: si los markers salieron puntuales y se pidio rangeMarkers,
+    // reintentar fijar end + duracion en nombre
+    try {
+        var batch = batchJson;
+        if (typeof batch === "string") { try { batch = eval("(" + batch + ")"); } catch (eB) { batch = null; } }
+        if (!batch || !batch.rangeMarkers || !batch.ranges) return res;
+        var seq = app.project ? app.project.activeSequence : null;
+        if (!seq) return res;
+        var zeroSec = getZeroSec(seq);
+        var ms = seq.markers;
+        var acc = 0;
+        for (var i = 0; i < batch.ranges.length; i++) {
+            var rg = batch.ranges[i];
+            var dur = rg.e - rg.s;
+            // buscar marker en la posicion del tramo
+            for (var m = 0; m < ms.numMarkers; m++) {
+                var mk = ms[m];
+                if (Math.abs(mk.start.seconds - (acc + zeroSec)) < 0.1) {
+                    // intentar fijar end
+                    var endOk = false;
+                    try {
+                        var endT = new Time();
+                        endT.seconds = acc + dur + zeroSec;
+                        mk.end = endT;
+                        endOk = true;
+                    } catch (eE1) {
+                        try { mk.end.seconds = endT.seconds; endOk = true; } catch (eE2) {}
+                    }
+                    // si no se pudo: duracion en nombre (si no esta ya)
+                    if (!endOk && String(mk.name).indexOf("[") < 0) {
+                        try { mk.name = (String(mk.name).slice(0, 120) + "  [" + Math.round(dur) + "s]").slice(0, 500); } catch (eNm) {}
+                    }
+                    break;
+                }
+            }
+            acc += dur;
+        }
+    } catch (ePost) {}
+    return res;
+}
