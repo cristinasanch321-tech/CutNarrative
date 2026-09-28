@@ -511,3 +511,66 @@ function CN_buildCapsule(batchJson) {
         return J(res);
     }
 }
+
+/* ---- v7: MARKERS categorizados ---- */
+/* lee todos los markers de la secuencia: posicion, nombre, color (categoria) */
+function CN_readMarkers() {
+    var res = { ok: false, markers: [] };
+    try {
+        var seq = app.project ? app.project.activeSequence : null;
+        if (!seq) { res.error = "No hay secuencia activa"; return J(res); }
+        res.ok = true;
+        var ms = seq.markers;
+        var n = ms.numMarkers;
+        for (var i = 0; i < n; i++) {
+            var m = ms[i];
+            var col = -1;
+            try { col = m.getColorByIndex ? m.getColorByIndex() : -1; } catch (eC) {}
+            res.markers.push({
+                t: Math.round((m.start.seconds - getZeroSec(seq)) * 1000) / 1000,
+                name: String(m.name || ""),
+                color: col
+            });
+        }
+        res.markers.sort(function (a, b) { return a.t - b.t; });
+        res.seqName = seq.name;
+        return J(res);
+    } catch (e) { res.error = e.toString(); return J(res); }
+}
+
+/* construye una secuencia por categoria: clona, recorta por rangos de markers, renombra */
+function CN_buildCategoryBatch(batchJson) {
+    var res = { ok: false, created: 0, seqs: [], errors: [] };
+    function err(m) { res.errors.push(String(m)); }
+    try {
+        var batch = eval("(" + batchJson + ")");
+        var cats = batch.categories || [];
+        if (!cats.length) { err("Sin categorias"); return J(res); }
+        var zero = getZeroSec(app.project.activeSequence);
+        for (var c = 0; c < cats.length; c++) {
+            var cat = cats[c];
+            // 1) clonar
+            var src = app.project.activeSequence;
+            var cl = null;
+            try { cl = src.clone(); } catch (e1) {}
+            if (!cl) { try { cl = app.project.createNewSequenceFromSequence(src.name + " temp", src); } catch (e2) {} }
+            if (!cl) { err("No pude clonar para " + cat.name); continue; }
+            cl.name = src.name + "_" + cat.name;
+            // 2) activar y recortar por los rangos de esta categoria
+            try { app.project.activeSequence = cl; } catch (eA) {}
+            var payload = { ranges: cat.ranges };
+            var r = eval("(" + CN_extract(JSON.stringify(JSON.stringify(payload))) + ")");
+            if (r.ok) {
+                res.created++;
+                res.seqs.push({ name: cl.name, markers: r.markers, dur: r.dur1 });
+            } else {
+                err(cl.name + ": " + (r.errors || []).join(" | "));
+            }
+        }
+        res.ok = res.created > 0;
+        return J(res);
+    } catch (e) {
+        res.errors.push("FATAL: " + e.toString());
+        return J(res);
+    }
+}

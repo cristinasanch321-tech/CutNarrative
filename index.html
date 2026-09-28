@@ -43,6 +43,7 @@
         <div class="tab on" id="tabMulti">🖥 Multicámara</div>
         <div class="tab" id="tabCaps">✂️ Extraer y unir</div>
         <div class="tab" id="tabBuild">🎬 Construir cápsula</div>
+        <div class="tab" id="tabMk">🏷 Markers</div>
     </div>
 
     <div class="card">
@@ -134,6 +135,32 @@
         </div>
     </section>
 
+    <section id="secMk" style="display:none">
+        <div class="card">
+            <label>1 · Leer markers de la secuencia activa</label>
+            <div style="font-size:10px; color:#bbb; margin-bottom:6px;">
+            Categorias = colores de marker. Colorea tus markers en Premiere
+            (clic derecho sobre marker > color) y cada color es una categoria:
+            p. ej. VERDE = REDES, AZUL = SPOT, AMARILLO = ARCHIVO.
+            </div>
+            <label>Margen antes de cada marker (s)</label>
+            <input type="number" id="mkPre" value="1" min="0" max="10" step="0.5">
+            <label>Margen después (s)</label>
+            <input type="number" id="mkPost" value="1" min="0" max="10" step="0.5">
+            <button class="sec" id="btnReadMk">📖 LEER MARKERS</button>
+            <div class="validate" id="mkList"></div>
+        </div>
+        <div class="card">
+            <label>2 · Categorias a generar (colores de marker)</label>
+            <div id="mkCats"></div>
+            <button class="go" id="btnBuildCats">3 · 🏷 CREAR TIMELINES POR CATEGORIA</button>
+            <div class="mini">
+                <button class="mk" id="btnPrevMkD">⏮ marker</button>
+                <button class="mk" id="btnNextMkD">marker ⏭</button>
+            </div>
+        </div>
+    </section>
+
     <div class="card">
         <label>Guardar / cargar plan (de la pestaña activa)</label>
         <div class="row2">
@@ -190,6 +217,8 @@
             document.getElementById('tabMulti').classList.toggle('on', m === 'multi');
             document.getElementById('tabCaps').classList.toggle('on', m === 'caps');
             document.getElementById('tabBuild').classList.toggle('on', m === 'build');
+            document.getElementById('tabMk').classList.toggle('on', m === 'mk');
+            document.getElementById('secMk').style.display = (m === 'mk') ? '' : 'none';
             document.getElementById('secMulti').style.display = (m === 'multi') ? '' : 'none';
             document.getElementById('secCaps').style.display = (m === 'caps') ? '' : 'none';
             document.getElementById('secBuild').style.display = (m === 'build') ? '' : 'none';
@@ -197,6 +226,7 @@
         document.getElementById('tabMulti').addEventListener('click', () => setMode('multi'));
         document.getElementById('tabCaps').addEventListener('click', () => setMode('caps'));
         document.getElementById('tabBuild').addEventListener('click', () => setMode('build'));
+        document.getElementById('tabMk').addEventListener('click', () => setMode('mk'));
 
         function refreshProbe(cb) {
             cs.evalScript('CN_probe()', (res) => {
@@ -639,6 +669,86 @@
                     setStatus(`OK · Clips: ${r.placed} · Markers: ${r.markers} · Total: ${fmt(r.total)}\nSecuencia: "${r.seqName}" (activa).` +
                         (r.errorCount ? '\nAvisos:\n' + r.errors.slice(0, 3).join('\n') : ''), 'ok');
                 } else setStatus('No se construyó:\n' + (r ? r.errors.join('\n') : res), 'err');
+            });
+        });
+
+        /* ================= MARKERS CATEGORIZADOS ================= */
+        const MK_COLORS = { '-1': 'sin color', '0': 'Verde', '1': 'Indigo', '2': 'Violeta', '3': 'Rosa',
+            '4': 'Naranja', '5': 'Amarillo', '6': 'Cian', '7': 'Rojo', '8': 'Blanco' };
+        let readMks = [];
+        const MK_NAMES = { 0: 'VERDE', 1: 'INDIGO', 2: 'VIOLETA', 3: 'ROSA', 4: 'NARANJA',
+            5: 'AMARILLO', 6: 'CIAN', 7: 'ROJO', 8: 'BLANCO' };
+
+        document.getElementById('btnReadMk').addEventListener('click', () => {
+            cs.evalScript('CN_readMarkers()', (res) => {
+                let r = null; try { r = JSON.parse(res); } catch (e) {}
+                if (!r || !r.ok) { document.getElementById('mkList').innerText = 'Error: ' + (r ? r.error : res); return; }
+                readMks = r.markers;
+                refreshProbe();
+                const pre = parseFloat(document.getElementById('mkPre').value) || 0;
+                const post = parseFloat(document.getElementById('mkPost').value) || 0;
+                const out = [`${readMks.length} markers en "${r.seqName}":`];
+                readMks.forEach((m, i) => {
+                    const col = MK_COLORS[m.color] || ('color ' + m.color);
+                    out.push(`${i + 1}. ${fmt(m.t)} · ${col} · "${m.name.slice(0, 40)}"`);
+                });
+                // agrupar por color con rangos propuestos
+                const byColor = {};
+                readMks.forEach(m => {
+                    const k = m.color;
+                    (byColor[k] = byColor[k] || []).push(m);
+                });
+                mksList = readMks.map(m => m.t); mkIdx = -1;
+                const catsEl = document.getElementById('mkCats');
+                catsEl.innerHTML = '';
+                Object.keys(byColor).forEach(k => {
+                    const arr = byColor[k];
+                    const row = document.createElement('div');
+                    row.className = 'chk';
+                    const nm = MK_NAMES[k] || ('COLOR' + k);
+                    row.innerHTML = `<input type="checkbox" data-color="${k}" checked> ${nm} (${arr.length} markers)`;
+                    catsEl.appendChild(row);
+                });
+                out.push('', `Categorias detectadas por COLOR: ${Object.keys(byColor).length}.`,
+                    'Cada categoria genera UNA secuencia clonada + recortada de marker a marker (con margenes).',
+                    'Elige arriba cuales y pulsa CREAR.');
+                document.getElementById('mkList').innerText = out.join('\n');
+            });
+        });
+
+        document.getElementById('btnBuildCats').addEventListener('click', () => {
+            if (busy) return;
+            if (!readMks.length) { setStatus('Lee los markers primero (📖).', 'err'); return; }
+            const chosen = [];
+            document.querySelectorAll('#mkCats input[type=checkbox]').forEach(cb => {
+                if (cb.checked) chosen.push(cb.dataset.color);
+            });
+            if (!chosen.length) { setStatus('No hay categorias marcadas.', 'err'); return; }
+            const pre = parseFloat(document.getElementById('mkPre').value) || 0;
+            const post = parseFloat(document.getElementById('mkPost').value) || 0;
+            // construir categorias: rangos de marker a marker (cada marker hasta el siguiente del mismo color)
+            const categories = [];
+            chosen.forEach(k => {
+                const arr = readMks.filter(m => String(m.color) === String(k)).sort((a, b) => a.t - b.t);
+                const nm = MK_NAMES[k] || ('COLOR' + k);
+                const ranges = [];
+                for (let i = 0; i < arr.length; i++) {
+                    const s = Math.max(0, arr[i].t - pre);
+                    const e = (i + 1 < arr.length) ? Math.max(s + 0.5, arr[i + 1].t - pre) : (arr[i].t + post);
+                    ranges.push({ s: s, e: e, note: arr[i].name || (nm + ' ' + (i + 1)) });
+                }
+                categories.push({ name: nm, ranges: ranges });
+            });
+            setBusy(true);
+            setStatus('🏷 Creando ' + categories.length + ' secuencia(s) por categoria...');
+            cs.evalScript('CN_buildCategoryBatch(' + JSON.stringify(JSON.stringify({ categories: categories })) + ')', (res) => {
+                let r = null; try { r = JSON.parse(res); } catch (e) {}
+                setBusy(false);
+                if (r && r.ok) {
+                    let m = `✔ ${r.created} secuencia(s) creadas:\n` + r.seqs.map(s => `• "${s.name}" (${s.dur}s, ${s.markers} markers)`).join('\n');
+                    if (r.errors.length) m += '\nAvisos:\n' + r.errors.slice(0, 3).join('\n');
+                    setStatus(m, 'ok');
+                } else setStatus('No se crearon:\n' + (r ? r.errors.join('\n') : res), 'err');
             });
         });
 
