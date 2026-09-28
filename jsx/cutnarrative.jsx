@@ -554,14 +554,20 @@ function CN_buildCategoryBatch(batchJson) {
     var res = { ok: false, created: 0, seqs: [], errors: [] };
     function err(m) { res.errors.push(String(m)); }
     try {
+        // v7.8: acepta objeto directo, JSON string, o doble-string; registra que llego
         var batch = null;
+        var probe = String(batchJson).substring(0, 60);
+        res.probe = probe;
         try { batch = eval("(" + batchJson + ")"); } catch (eB1) { batch = null; }
         if (batch === null || typeof batch === "string") {
             try { batch = eval("(" + batch + ")"); } catch (eB2) { batch = null; }
         }
-        if (!batch || typeof batch !== "object") { err("Batch ilegible"); return J(res); }
+        if (!batch || typeof batch !== "object") {
+            err("Batch ilegible. Recibido (primeros 60 chars): " + probe);
+            return J(res);
+        }
         var cats = batch.categories || [];
-        if (!cats.length) { err("Sin categorias"); return J(res); }
+        if (!cats.length) { err("Sin categorias. Recibido: " + probe); return J(res); }
 
         for (var c = 0; c < cats.length; c++) {
             var cat = cats[c];
