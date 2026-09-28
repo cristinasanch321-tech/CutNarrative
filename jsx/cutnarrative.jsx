@@ -285,6 +285,7 @@ function CN_extract(batchJson) {
         var fps = 254016000000 / Number(seq.timebase);
         var zeroSec = getZeroSec(seq);
         var dur0 = computeRealEnd(seq);
+        res.segsRecibidos = ranges.length;
         res.dur0 = Math.round(dur0 * 10) / 10;
         if (!isFinite(dur0) || dur0 <= 0) { err("No pude leer la duracion (ni clips). NADA tocado."); return J(res); }
 
@@ -411,14 +412,17 @@ function CN_extract(batchJson) {
                 var mk = seq.markers.createMarker(acc + zeroSec);
                 if (mk) {
                     var note = ranges[i].note || ("Fragmento " + (i + 1));
-                    mk.name = String(note).slice(0, 60);
+                    try { mk.name = String(note).slice(0, 500); } catch (eN2) { try { mk.name = note; } catch (eN3) {} }
                     try { mk.comments = String(note); } catch (eC) {}
                     try { mk.setColorByIndex(2); } catch (eCol) {}
                     if (wantRangeMarkers) {
-                        // marker de RANGO: dura lo mismo que el tramo
-                        try { mk.end = new Time(); mk.end.seconds = acc + (ranges[i].e - ranges[i].s) + zeroSec; } catch (eEnd) {
-                            try { mk.end.seconds = acc + (ranges[i].e - ranges[i].s) + zeroSec; } catch (eEnd2) {}
-                        }
+                        var endT = new Time();
+                        endT.seconds = acc + (ranges[i].e - ranges[i].s) + zeroSec;
+                        try { mk.end = endT; } catch (eEnd1) {}
+                        try { mk.end.seconds = endT.seconds; } catch (eEnd2) {}
+                        var chk = 0;
+                        try { chk = mk.end.seconds; } catch (eChk) {}
+                        if (!chk || chk <= acc + zeroSec) res.errors.push("marker " + (i + 1) + ": no pudo fijarse el FIN del rango (salio puntual)");
                     }
                     res.markers++;
                 }
@@ -566,14 +570,18 @@ function CN_buildCategoryBatch(batchJson) {
             try { cl.name = newName; } catch (eN) {}
             try { app.project.activeSequence = cl; } catch (eA) {}
 
-            // extract con payload SIMPLE (un solo stringify)
+            // extract con payload SIMPLE + verificacion de lo recibido
+            var nRanges = (cat.ranges || []).length;
+            var resumen = [];
+            (cat.ranges || []).forEach(function (rg) { resumen.push(rg.s.toFixed(1) + "-" + rg.e.toFixed(1)); });
             var payload = { ranges: cat.ranges, rangeMarkers: true };
             var r = eval("(" + CN_extract(JSON.stringify(payload)) + ")");
+            var recibe = (r && typeof r.segsRecibidos !== 'undefined') ? r.segsRecibidos : '?';
             if (r && r.ok) {
                 res.created++;
-                res.seqs.push({ name: newName, markers: r.markers, dur: r.dur1 });
+                res.seqs.push({ name: newName, markers: r.markers, dur: r.dur1, rangosEnviados: nRanges, rangosRecibidos: recibe });
             } else {
-                err(newName + ": " + ((r && r.errors) ? r.errors.join(" | ") : "extract sin respuesta"));
+                err(newName + " (enviados " + nRanges + " [" + resumen.join(",") + "], recibidos " + recibe + "): " + ((r && r.errors) ? r.errors.join(" | ") : "sin respuesta"));
             }
         }
         res.ok = res.created > 0;
