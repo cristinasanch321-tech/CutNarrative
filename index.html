@@ -678,125 +678,122 @@ CATEGORIA: REEL
             });
         });
 
-        /* ================= MARKERS CATEGORIZADOS ================= */
-        const MK_COLORS = { '-1': 'sin color', '0': 'Verde', '1': 'Indigo', '2': 'Violeta', '3': 'Rosa',
-            '4': 'Naranja', '5': 'Amarillo', '6': 'Cian', '7': 'Rojo', '8': 'Blanco' };
-        let readMks = [];
+                /* ================= MARKERS CATEGORIZADOS ================= */
+        const NL = String.fromCharCode(10);
         const MK_NAMES = { 0: 'VERDE', 1: 'INDIGO', 2: 'VIOLETA', 3: 'ROSA', 4: 'NARANJA',
             5: 'AMARILLO', 6: 'CIAN', 7: 'ROJO', 8: 'BLANCO' };
+        let readMks = [];
+        let pasteCategories = null;
+
+        document.getElementById('btnParsePaste').addEventListener('click', () => {
+            try {
+                const text = document.getElementById('mkPaste').value;
+                const cats = [];
+                let cur = null;
+                text.split(/\r?\n/).forEach((raw) => {
+                    const line = raw.trim();
+                    if (!line) return;
+                    const mc = line.match(/^#?\s*CATEGOR[IÍ]A:\s*(.+)$/i);
+                    if (mc) { cur = { name: mc[1].trim().toUpperCase(), ranges: [] }; cats.push(cur); return; }
+                    if (!cur) return;
+                    const norm = line.replace(/[–—→]/g, '-');
+                    const mm = norm.match(/^(\S+)\s*-\s*(\S+)\s*(.*)$/);
+                    if (!mm) return;
+                    const s = parseTime(mm[1]), e = parseTime(mm[2]);
+                    if (isNaN(s) || isNaN(e) || e <= s) return;
+                    cur.ranges.push({ s: s, e: e, note: (mm[3] || '').trim() });
+                });
+                pasteCategories = cats.filter(c => c.ranges.length);
+                const el = document.getElementById('mkList');
+                if (!pasteCategories.length) { el.innerText = 'No entendí la tabla: cada grupo debe empezar con CATEGORIA: NOMBRE'; return; }
+                const out = ['OK: ' + pasteCategories.length + ' categorías:'];
+                pasteCategories.forEach(c => {
+                    out.push('• ' + c.name + ': ' + c.ranges.length + ' bloque(s)');
+                    c.ranges.forEach(rg => out.push('   ' + fmt(rg.s) + ' → ' + fmt(rg.e) + '  "' + rg.note.slice(0, 40) + '"'));
+                });
+                el.innerText = out.join(NL);
+            } catch (eParse) {
+                document.getElementById('mkList').innerText = '⚠️ Error parseando: ' + eParse.message;
+            }
+        });
 
         document.getElementById('btnReadMk').addEventListener('click', () => {
             cs.evalScript('CN_readMarkers()', (res) => {
-                let r = null; try { r = JSON.parse(res); } catch (e) {}
-                if (!r || !r.ok) { document.getElementById('mkList').innerText = 'Error: ' + (r ? r.error : res); return; }
-                readMks = r.markers;
-                refreshProbe();
-                const pre = parseFloat(document.getElementById('mkPre').value) || 0;
-                const post = parseFloat(document.getElementById('mkPost').value) || 0;
-                const out = [`${readMks.length} markers en "${r.seqName}":`];
-                readMks.forEach((m, i) => {
-                    const col = MK_COLORS[m.color] || ('color ' + m.color);
-                    out.push(`${i + 1}. ${fmt(m.t)} · ${col} · "${m.name.slice(0, 40)}"`);
-                });
-                // agrupar por color con rangos propuestos
-                const byColor = {};
-                readMks.forEach(m => {
-                    const k = m.color;
-                    (byColor[k] = byColor[k] || []).push(m);
-                });
-                mksList = readMks.map(m => m.t); mkIdx = -1;
-                const catsEl = document.getElementById('mkCats');
-                catsEl.innerHTML = '';
-                Object.keys(byColor).forEach(k => {
-                    const arr = byColor[k];
-                    const row = document.createElement('div');
-                    row.className = 'chk';
-                    const nm = MK_NAMES[k] || ('COLOR' + k);
-                    row.innerHTML = `<input type="checkbox" data-color="${k}" checked> ${nm} (${arr.length} markers)`;
-                    catsEl.appendChild(row);
-                });
-                out.push('', `Categorias detectadas por COLOR: ${Object.keys(byColor).length}.`,
-                    'Cada categoria genera UNA secuencia clonada + recortada de marker a marker (con margenes).',
-                    'Elige arriba cuales y pulsa CREAR.');
-                document.getElementById('mkList').innerText = out.join('\n');
+                try {
+                    const r = JSON.parse(res);
+                    if (!r || !r.ok) { document.getElementById('mkList').innerText = 'Error: ' + (r ? r.error : res); return; }
+                    readMks = r.markers;
+                    refreshProbe();
+                    const out = [readMks.length + ' markers en "' + r.seqName + '":'];
+                    readMks.forEach((m, i) => {
+                        const col = MK_NAMES[m.color] || ('COLOR ' + m.color);
+                        out.push((i + 1) + '. ' + fmt(m.t) + ' · ' + col + ' · "' + m.name.slice(0, 40) + '"');
+                    });
+                    const byColor = {};
+                    readMks.forEach(m => { const k = m.color; (byColor[k] = byColor[k] || []).push(m); });
+                    mksList = readMks.map(m => m.t); mkIdx = -1;
+                    const catsEl = document.getElementById('mkCats');
+                    catsEl.innerHTML = '';
+                    Object.keys(byColor).forEach(k => {
+                        const nm = MK_NAMES[k] || ('COLOR' + k);
+                        const row = document.createElement('div');
+                        row.className = 'chk';
+                        row.innerHTML = '<input type="checkbox" data-color="' + k + '" checked> ' + nm + ' (' + byColor[k].length + ')';
+                        catsEl.appendChild(row);
+                    });
+                    out.push('', 'Categorías por color: ' + Object.keys(byColor).length);
+                    document.getElementById('mkList').innerText = out.join(NL);
+                } catch (eRead) {
+                    document.getElementById('mkList').innerText = '⚠️ Error leyendo: ' + eRead.message;
+                }
             });
-        });
-
-        // parseo del formato CATEGORIA: + rangos IN-OUT
-        let pasteCategories = null;
-        document.getElementById('btnParsePaste').addEventListener('click', () => {
-            const text = document.getElementById('mkPaste').value;
-            const cats = [];
-            let cur = null;
-            text.split(/?
-/).forEach((raw) => {
-                const line = raw.trim();
-                if (!line) return;
-                const mc = line.match(/^#?\s*CATEGOR[IÍ]A:\s*(.+)$/i);
-                if (mc) { cur = { name: mc[1].trim().toUpperCase(), ranges: [] }; cats.push(cur); return; }
-                if (!cur) return;
-                const norm = line.replace(/[–—→]/g, '-');
-                const mm = norm.match(/^(\S+)\s*-\s*(\S+)\s*(.*)$/);
-                if (!mm) return;
-                const s = parseTime(mm[1]), e = parseTime(mm[2]);
-                if (isNaN(s) || isNaN(e) || e <= s) return;
-                cur.ranges.push({ s: s, e: e, note: (mm[3] || '').trim() });
-            });
-            pasteCategories = cats.filter(c => c.ranges.length);
-            const el = document.getElementById('mkList');
-            if (!pasteCategories.length) { el.innerText = 'No entendí la tabla: ¿empieza cada grupo con CATEGORIA: NOMBRE?'; return; }
-            const out = [`✓ ${pasteCategories.length} categorías:`];
-            pasteCategories.forEach(c => {
-                out.push(`• ${c.name}: ${c.ranges.length} bloque(s)`);
-                c.ranges.forEach(rg => out.push(`   ${fmt(rg.s)} → ${fmt(rg.e)}  "${rg.note.slice(0, 40)}"`));
-            });
-            out.push('', 'Cada categoría = UNA secuencia recortada con sus bloques (markers de rango).');
-            el.innerText = out.join('\n');
         });
 
         document.getElementById('btnBuildCats').addEventListener('click', () => {
-            if (busy) return;
-            // prioridad: tabla pegada > markers leidos
-            let categories = [];
-            if (pasteCategories && pasteCategories.length) {
-                pasteCategories.forEach(c => categories.push({ name: c.name, ranges: c.ranges.map(rg => ({ s: rg.s, e: rg.e, note: rg.note })) }));
-            } else if (readMks.length) {
-                const chosen = [];
-                document.querySelectorAll('#mkCats input[type=checkbox]').forEach(cb => {
-                    if (cb.checked) chosen.push(cb.dataset.color);
+            try {
+                if (busy) return;
+                let categories = [];
+                if (pasteCategories && pasteCategories.length) {
+                    pasteCategories.forEach(c => categories.push({ name: c.name, ranges: c.ranges.map(rg => ({ s: rg.s, e: rg.e, note: rg.note })) }));
+                } else if (readMks.length) {
+                    const chosen = [];
+                    document.querySelectorAll('#mkCats input[type=checkbox]').forEach(cb => {
+                        if (cb.checked) chosen.push(cb.dataset.color);
+                    });
+                    if (!chosen.length) { setStatus('Marca categorías o pega tabla.', 'err'); return; }
+                    const pre = parseFloat(document.getElementById('mkPre').value) || 0;
+                    const post = parseFloat(document.getElementById('mkPost').value) || 0;
+                    chosen.forEach(k => {
+                        const arr = readMks.filter(m => String(m.color) === String(k)).sort((a, b) => a.t - b.t);
+                        const nm = MK_NAMES[k] || ('COLOR' + k);
+                        const ranges = [];
+                        for (let i = 0; i < arr.length; i++) {
+                            const s = Math.max(0, arr[i].t - pre);
+                            const e = (i + 1 < arr.length) ? Math.max(s + 0.5, arr[i + 1].t - pre) : (arr[i].t + post);
+                            ranges.push({ s: s, e: e, note: arr[i].name || (nm + ' ' + (i + 1)) });
+                        }
+                        categories.push({ name: nm, ranges: ranges });
+                    });
+                } else { setStatus('Pega tabla (📥) o lee markers (📖).', 'err'); return; }
+                setBusy(true);
+                setStatus('Creando ' + categories.length + ' secuencia(s)...');
+                cs.evalScript('CN_buildCategoryBatch(' + JSON.stringify(JSON.stringify({ categories: categories })) + ')', (res) => {
+                    let r = null; try { r = JSON.parse(res); } catch (e) {}
+                    setBusy(false);
+                    if (r && r.ok) {
+                        let m = '✔ ' + r.created + ' secuencia(s):' + NL + r.seqs.map(s => '• "' + s.name + '" (' + s.dur + 's, ' + s.markers + ' markers)').join(NL);
+                        if (r.errors.length) m += NL + 'Avisos:' + NL + r.errors.slice(0, 3).join(NL);
+                        setStatus(m, 'ok');
+                    } else setStatus('No se crearon:\n' + (r ? r.errors.join(NL) : res), 'err');
                 });
-                if (!chosen.length) { setStatus('Pega una tabla (📥) o lee markers (📖).', 'err'); return; }
-                const pre = parseFloat(document.getElementById('mkPre').value) || 0;
-                const post = parseFloat(document.getElementById('mkPost').value) || 0;
-                chosen.forEach(k => {
-                    const arr = readMks.filter(m => String(m.color) === String(k)).sort((a, b) => a.t - b.t);
-                    const nm = MK_NAMES[k] || ('COLOR' + k);
-                    const ranges = [];
-                    for (let i = 0; i < arr.length; i++) {
-                        const s = Math.max(0, arr[i].t - pre);
-                        const e = (i + 1 < arr.length) ? Math.max(s + 0.5, arr[i + 1].t - pre) : (arr[i].t + post);
-                        ranges.push({ s: s, e: e, note: arr[i].name || (nm + ' ' + (i + 1)) });
-                    }
-                    categories.push({ name: nm, ranges: ranges });
-                });
-            } else {
-                setStatus('Nada que procesar: pega la tabla (📥) o lee markers (📖).', 'err');
-                return;
-            }
-            setBusy(true);
-            setStatus('🏷 Creando ' + categories.length + ' secuencia(s) por categoria...');
-            cs.evalScript('CN_buildCategoryBatch(' + JSON.stringify(JSON.stringify({ categories: categories })) + ')', (res) => {
-                let r = null; try { r = JSON.parse(res); } catch (e) {}
+            } catch (eBuild) {
+                setStatus('⚠️ Error: ' + eBuild.message, 'err');
                 setBusy(false);
-                if (r && r.ok) {
-                    let m = `✔ ${r.created} secuencia(s) creadas:\n` + r.seqs.map(s => `• "${s.name}" (${s.dur}s, ${s.markers} markers)`).join('\n');
-                    if (r.errors.length) m += '\nAvisos:\n' + r.errors.slice(0, 3).join('\n');
-                    setStatus(m, 'ok');
-                } else setStatus('No se crearon:\n' + (r ? r.errors.join('\n') : res), 'err');
-            });
+            }
         });
 
         /* ================= navegar + guardar/cargar ================= */
+/* ================= navegar + guardar/cargar ================= */
         function gotoMk(dir) {
             if (!mksList.length) { setStatus('Valida un plan primero.'); return; }
             mkIdx = (mkIdx + dir + mksList.length) % mksList.length;
