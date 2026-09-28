@@ -679,7 +679,7 @@ CATEGORIA: REEL
         });
 
                 /* ================= MARKERS CATEGORIZADOS ================= */
-        const NL = String.fromCharCode(10);
+        const MK_NL = String.fromCharCode(10);
         const MK_NAMES = { 0: 'VERDE', 1: 'INDIGO', 2: 'VIOLETA', 3: 'ROSA', 4: 'NARANJA',
             5: 'AMARILLO', 6: 'CIAN', 7: 'ROJO', 8: 'BLANCO' };
         let readMks = [];
@@ -711,7 +711,7 @@ CATEGORIA: REEL
                     out.push('• ' + c.name + ': ' + c.ranges.length + ' bloque(s)');
                     c.ranges.forEach(rg => out.push('   ' + fmt(rg.s) + ' → ' + fmt(rg.e) + '  "' + rg.note.slice(0, 40) + '"'));
                 });
-                el.innerText = out.join(NL);
+                el.innerText = out.join(MK_NL);
             } catch (eParse) {
                 document.getElementById('mkList').innerText = '⚠️ Error parseando: ' + eParse.message;
             }
@@ -742,7 +742,7 @@ CATEGORIA: REEL
                         catsEl.appendChild(row);
                     });
                     out.push('', 'Categorías por color: ' + Object.keys(byColor).length);
-                    document.getElementById('mkList').innerText = out.join(NL);
+                    document.getElementById('mkList').innerText = out.join(MK_NL);
                 } catch (eRead) {
                     document.getElementById('mkList').innerText = '⚠️ Error leyendo: ' + eRead.message;
                 }
@@ -781,10 +781,10 @@ CATEGORIA: REEL
                     let r = null; try { r = JSON.parse(res); } catch (e) {}
                     setBusy(false);
                     if (r && r.ok) {
-                        let m = '✔ ' + r.created + ' secuencia(s):' + NL + r.seqs.map(s => '• "' + s.name + '" (' + s.dur + 's, ' + s.markers + ' markers)').join(NL);
-                        if (r.errors.length) m += NL + 'Avisos:' + NL + r.errors.slice(0, 3).join(NL);
+                        let m = '✔ ' + r.created + ' secuencia(s):' + MK_NL + r.seqs.map(s => '• "' + s.name + '" (' + s.dur + 's, ' + s.markers + ' markers)').join(MK_NL);
+                        if (r.errors.length) m += NL + 'Avisos:' + MK_NL + r.errors.slice(0, 3).join(MK_NL);
                         setStatus(m, 'ok');
-                    } else setStatus('No se crearon:\n' + (r ? r.errors.join(NL) : res), 'err');
+                    } else setStatus('No se crearon:\n' + (r ? r.errors.join(MK_NL) : res), 'err');
                 });
             } catch (eBuild) {
                 setStatus('⚠️ Error: ' + eBuild.message, 'err');
