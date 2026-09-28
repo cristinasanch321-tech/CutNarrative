@@ -422,7 +422,10 @@ function CN_extract(batchJson) {
                         try { mk.end.seconds = endT.seconds; } catch (eEnd2) {}
                         var chk = 0;
                         try { chk = mk.end.seconds; } catch (eChk) {}
-                        if (!chk || chk <= acc + zeroSec) res.errors.push("marker " + (i + 1) + ": no pudo fijarse el FIN del rango (salio puntual)");
+                        if (!chk || chk <= acc + zeroSec) {
+                            // tu version no permite marker.end: la duracion va en el nombre
+                            try { mk.name = (String(note).slice(0, 120) + "  [" + Math.round(ranges[i].e - ranges[i].s) + "s]").slice(0, 500); } catch (eDur) {}
+                        }
                     }
                     res.markers++;
                 }
