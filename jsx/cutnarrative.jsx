@@ -586,7 +586,7 @@ function CN_buildCategoryBatch(batchJson) {
             if (typeof rgv === "string") { try { rgv = JSON.parse(rgv); } catch (eV1) { rgv = null; } }
             if (!rgv || !rgv.length) { err(catv.name + ": 0 rangos"); continue; }
             for (var k = 0; k < rgv.length; k++) {
-                if (rgv[k].e > srcEnd + TOL_EXTRACT) {
+                if (rgv[k].e > srcEnd + 0.05) {
                     err(catv.name + ": el bloque " + (k + 1) + " acaba en " + rgv[k].e.toFixed(1) + "s pero la fuente dura " + srcEnd.toFixed(1) + "s");
                     return J(res);
                 }
