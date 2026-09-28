@@ -639,3 +639,51 @@ function CN_buildCategoryBatch(batchJson) {
         return J(res);
     }
 }
+
+/* ---- v7.15: patch aplicado al CN_extract existente via override ---- */
+/* Como no puedo editar la funcion original con anclas, defino un WRAPPER:
+   reescribo CN_extract para anadir el fallback de duracion en nombre de marker.
+   La version original se guarda y esta version la envuelve. */
+var CN_extract_original_v715 = CN_extract;
+CN_extract = function(batchJson) {
+    var res = CN_extract_original_v715(batchJson);
+    // post-proceso: si los markers salieron puntuales y se pidio rangeMarkers,
+    // reintentar fijar end + duracion en nombre
+    try {
+        var batch = batchJson;
+        if (typeof batch === "string") { try { batch = eval("(" + batch + ")"); } catch (eB) { batch = null; } }
+        if (!batch || !batch.rangeMarkers || !batch.ranges) return res;
+        var seq = app.project ? app.project.activeSequence : null;
+        if (!seq) return res;
+        var zeroSec = getZeroSec(seq);
+        var ms = seq.markers;
+        var acc = 0;
+        for (var i = 0; i < batch.ranges.length; i++) {
+            var rg = batch.ranges[i];
+            var dur = rg.e - rg.s;
+            // buscar marker en la posicion del tramo
+            for (var m = 0; m < ms.numMarkers; m++) {
+                var mk = ms[m];
+                if (Math.abs(mk.start.seconds - (acc + zeroSec)) < 0.1) {
+                    // intentar fijar end
+                    var endOk = false;
+                    try {
+                        var endT = new Time();
+                        endT.seconds = acc + dur + zeroSec;
+                        mk.end = endT;
+                        endOk = true;
+                    } catch (eE1) {
+                        try { mk.end.seconds = endT.seconds; endOk = true; } catch (eE2) {}
+                    }
+                    // si no se pudo: duracion en nombre (si no esta ya)
+                    if (!endOk && String(mk.name).indexOf("[") < 0) {
+                        try { mk.name = (String(mk.name).slice(0, 120) + "  [" + Math.round(dur) + "s]").slice(0, 500); } catch (eNm) {}
+                    }
+                    break;
+                }
+            }
+            acc += dur;
+        }
+    } catch (ePost) {}
+    return res;
+}
