@@ -405,6 +405,7 @@ function CN_extract(batchJson) {
         if (aborted) return J(res);
 
         var acc = 0;
+        var wantRangeMarkers = !!(batch.rangeMarkers);
         for (i = 0; i < ranges.length; i++) {
             try {
                 var mk = seq.markers.createMarker(acc + zeroSec);
@@ -413,6 +414,12 @@ function CN_extract(batchJson) {
                     mk.name = String(note).slice(0, 60);
                     try { mk.comments = String(note); } catch (eC) {}
                     try { mk.setColorByIndex(2); } catch (eCol) {}
+                    if (wantRangeMarkers) {
+                        // marker de RANGO: dura lo mismo que el tramo
+                        try { mk.end = new Time(); mk.end.seconds = acc + (ranges[i].e - ranges[i].s) + zeroSec; } catch (eEnd) {
+                            try { mk.end.seconds = acc + (ranges[i].e - ranges[i].s) + zeroSec; } catch (eEnd2) {}
+                        }
+                    }
                     res.markers++;
                 }
             } catch (eM) { err("marker " + (i + 1) + ": " + eM); }
@@ -558,7 +565,7 @@ function CN_buildCategoryBatch(batchJson) {
             cl.name = src.name + "_" + cat.name;
             // 2) activar y recortar por los rangos de esta categoria
             try { app.project.activeSequence = cl; } catch (eA) {}
-            var payload = { ranges: cat.ranges };
+            var payload = { ranges: cat.ranges, rangeMarkers: true };
             var r = eval("(" + CN_extract(JSON.stringify(JSON.stringify(payload))) + ")");
             if (r.ok) {
                 res.created++;
