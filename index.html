@@ -159,6 +159,8 @@ CATEGORIA: REEL
         <div class="card">
             <label>2 · Categorías detectadas</label>
             <div id="mkCats"></div>
+            <div class="chk"><input type="checkbox" id="mkDry" checked> 🧪 Simulación (verifica sin tocar)</div>
+            <div class="chk"><input type="checkbox" id="mkAdj" checked> 🎚 Capa de ajuste por bloque (pista superior)</div>
             <button class="go" id="btnBuildCats">3 · 🏷 CREAR TIMELINES POR CATEGORIA</button>
             <div class="mini">
                 <button class="mk" id="btnPrevMkD">⏮ marker</button>
@@ -780,14 +782,17 @@ CATEGORIA: REEL
                 } else { setStatus('Pega tabla (📥) o lee markers (📖).', 'err'); return; }
                 setBusy(true);
                 setStatus('Creando ' + categories.length + ' secuencia(s)...');
-                cs.evalScript('CN_buildCategoryBatch(' + JSON.stringify({ categories: categories }) + ')', (res) => {
+                refreshProbe((pr) => {
+                    const srcName = (pr && pr.ok) ? pr.seq : '';
+                    cs.evalScript('CN_buildCategoryBatch(' + JSON.stringify({ categories: categories, sourceName: srcName, dry: document.getElementById('mkDry').checked, adjLayer: document.getElementById('mkAdj').checked }) + ')', (res) => {
                     let r = null; try { r = JSON.parse(res); } catch (e) {}
                     setBusy(false);
                     if (r && r.ok) {
                         let m = '✔ ' + r.created + ' secuencia(s):' + MK_NL + r.seqs.map(s => '• "' + s.name + '" (' + s.dur + 's, ' + s.markers + ' markers)').join(MK_NL);
                         if (r.errors.length) m += NL + 'Avisos:' + MK_NL + r.errors.slice(0, 3).join(MK_NL);
                         setStatus(m, 'ok');
-                    } else setStatus('No se crearon:\n' + (r ? r.errors.join(MK_NL) : res), 'err');
+                        } else setStatus('No se crearon:\n' + (r ? r.errors.join(MK_NL) : res), 'err');
+                    });
                 });
             } catch (eBuild) {
                 setStatus('⚠️ Error: ' + eBuild.message, 'err');
