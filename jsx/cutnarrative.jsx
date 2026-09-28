@@ -687,3 +687,84 @@ CN_extract = function(batchJson) {
     } catch (ePost) {}
     return res;
 }
+
+/* ---- v9: CAPA DE AJUSTE en pista vacia superior (tecnica plantilla .prproj) ---- */
+var CN_adjItemCache = null;
+function CN_importAdjustmentTemplate() {
+    if (CN_adjItemCache) return CN_adjItemCache;
+    var extDir = "";
+    try { extDir = $.fileName.substring(0, $.fileName.lastIndexOf("/")); } catch (e0) {}
+    var candidates = [
+        extDir + "/assets/adjustment-layer.prproj"
+    ];
+    for (var ci = 0; ci < candidates.length; ci++) {
+        var f = new File(candidates[ci]);
+        if (!f.exists) continue;
+        var root = app.project.rootItem;
+        var before = {};
+        for (var i = 0; i < root.children.numItems; i++) before[root.children[i].nodeId] = true;
+        try { app.project.importFiles([f.fsName], true, root, false); } catch (e0) { continue; }
+        var item = null, importBin = null;
+        for (var j = 0; j < root.children.numItems; j++) {
+            var c = root.children[j];
+            if (before[c.nodeId]) continue;
+            if (c.type === ProjectItemType.BIN) {
+                importBin = c;
+                for (var q = 0; q < c.children.numItems; q++) {
+                    var inner = c.children[q];
+                    if (/adjustment/i.test(String(inner.name))) { item = inner; break; }
+                }
+            } else if (/adjustment/i.test(String(c.name))) { item = c; }
+        }
+        if (item && importBin) {
+            try { item.moveBin(root); } catch (e1) {}
+            try { importBin.deleteBin(); } catch (e2) {}
+        }
+        if (item) { try { item.name = "Adjustment Layer CUTNARRATIVE"; } catch (e3) {} }
+        CN_adjItemCache = item;
+        return item;
+    }
+    return null;
+}
+
+/* coloca la capa de ajuste cubriendo [s,e] en la pista vacia mas alta (o crea una) */
+function CN_placeAdjustment(seq, s, e, label) {
+    var adj = CN_importAdjustmentTemplate();
+    if (!adj) return { ok: false, error: "plantilla no encontrada" };
+    // pista vacia mas alta sobre la que cubra el rango (como Outflow)
+    var minIdx = 0, n = seq.videoTracks.numTracks, i, j;
+    for (i = 0; i < n; i++) {
+        var tr = seq.videoTracks[i];
+        for (j = 0; j < tr.clips.numItems; j++) {
+            var c = tr.clips[j];
+            if (c.start.seconds < e && c.end.seconds > s) { minIdx = i + 1; }
+        }
+    }
+    for (var k = minIdx; k < n; k++) {
+        var busy = false, t2 = seq.videoTracks[k];
+        for (var m = 0; m < t2.clips.numItems; m++) {
+            var c2 = t2.clips[m];
+            if (c2.start.seconds < e && c2.end.seconds > s) { busy = true; break; }
+        }
+        if (!busy) break;
+    }
+    var ti = k;
+    var added = 0;
+    while (ti >= seq.videoTracks.numTracks) {
+        var d1 = false;
+        try { seq.addVideoTrack(); d1 = true; } catch (e1) {}
+        if (!d1) { try { app.enableQE(); qe.project.getActiveSequence().addVideoTrack(); d1 = true; } catch (e2) {} }
+        if (!d1) return { ok: false, error: "no pude crear pista para la capa" };
+        added++;
+    }
+    var track = seq.videoTracks[ti];
+    try { track.overwriteClip(adj, s); } catch (eP) { return { ok: false, error: "colocar: " + eP }; }
+    var ac = null;
+    for (var q2 = 0; q2 < track.clips.numItems; q2++) {
+        if (track.clips[q2].start.seconds >= s - 0.05) { ac = track.clips[q2]; break; }
+    }
+    if (!ac) return { ok: false, error: "capa colocada pero no encontrada" };
+    try { var en = new Time(); en.seconds = e; ac.end = en; } catch (e3) {}
+    try { ac.name = String(label || "Ajuste").slice(0, 100); } catch (e4) {}
+    return { ok: true, track: ti + 1, addedTrack: added };
+}
