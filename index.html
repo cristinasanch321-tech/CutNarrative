@@ -137,7 +137,13 @@
 
     <section id="secMk" style="display:none">
         <div class="card">
-            <label>1 · Leer markers de la secuencia activa</label>
+            <label>1 · Pega la tabla de categorías (del chat) o lee los markers existentes</label>
+            <textarea id="mkPaste" spellcheck="false" style="min-height:110px;" placeholder="CATEGORIA: YOUTUBE
+00:00 - 03:32 Youtube 1.1 Crítica etiquetas del DSM-5
+
+CATEGORIA: REEL
+02:49 - 03:33 Reel 1.1 DSM-5 fue bastante autorreferencial"></textarea>
+            <button class="sec" id="btnParsePaste">📥 PARSEAR TABLA</button>
             <div style="font-size:10px; color:#bbb; margin-bottom:6px;">
             Categorias = colores de marker. Colorea tus markers en Premiere
             (clic derecho sobre marker > color) y cada color es una categoria:
@@ -147,11 +153,11 @@
             <input type="number" id="mkPre" value="1" min="0" max="10" step="0.5">
             <label>Margen después (s)</label>
             <input type="number" id="mkPost" value="1" min="0" max="10" step="0.5">
-            <button class="sec" id="btnReadMk">📖 LEER MARKERS</button>
+            <button class="sec" id="btnReadMk">📖 LEER MARKERS EXISTENTES</button>
             <div class="validate" id="mkList"></div>
         </div>
         <div class="card">
-            <label>2 · Categorias a generar (colores de marker)</label>
+            <label>2 · Categorías detectadas</label>
             <div id="mkCats"></div>
             <button class="go" id="btnBuildCats">3 · 🏷 CREAR TIMELINES POR CATEGORIA</button>
             <div class="mini">
@@ -716,29 +722,67 @@
             });
         });
 
+        // parseo del formato CATEGORIA: + rangos IN-OUT
+        let pasteCategories = null;
+        document.getElementById('btnParsePaste').addEventListener('click', () => {
+            const text = document.getElementById('mkPaste').value;
+            const cats = [];
+            let cur = null;
+            text.split(/?
+/).forEach((raw) => {
+                const line = raw.trim();
+                if (!line) return;
+                const mc = line.match(/^#?\s*CATEGOR[IÍ]A:\s*(.+)$/i);
+                if (mc) { cur = { name: mc[1].trim().toUpperCase(), ranges: [] }; cats.push(cur); return; }
+                if (!cur) return;
+                const norm = line.replace(/[–—→]/g, '-');
+                const mm = norm.match(/^(\S+)\s*-\s*(\S+)\s*(.*)$/);
+                if (!mm) return;
+                const s = parseTime(mm[1]), e = parseTime(mm[2]);
+                if (isNaN(s) || isNaN(e) || e <= s) return;
+                cur.ranges.push({ s: s, e: e, note: (mm[3] || '').trim() });
+            });
+            pasteCategories = cats.filter(c => c.ranges.length);
+            const el = document.getElementById('mkList');
+            if (!pasteCategories.length) { el.innerText = 'No entendí la tabla: ¿empieza cada grupo con CATEGORIA: NOMBRE?'; return; }
+            const out = [`✓ ${pasteCategories.length} categorías:`];
+            pasteCategories.forEach(c => {
+                out.push(`• ${c.name}: ${c.ranges.length} bloque(s)`);
+                c.ranges.forEach(rg => out.push(`   ${fmt(rg.s)} → ${fmt(rg.e)}  "${rg.note.slice(0, 40)}"`));
+            });
+            out.push('', 'Cada categoría = UNA secuencia recortada con sus bloques (markers de rango).');
+            el.innerText = out.join('\n');
+        });
+
         document.getElementById('btnBuildCats').addEventListener('click', () => {
             if (busy) return;
-            if (!readMks.length) { setStatus('Lee los markers primero (📖).', 'err'); return; }
-            const chosen = [];
-            document.querySelectorAll('#mkCats input[type=checkbox]').forEach(cb => {
-                if (cb.checked) chosen.push(cb.dataset.color);
-            });
-            if (!chosen.length) { setStatus('No hay categorias marcadas.', 'err'); return; }
-            const pre = parseFloat(document.getElementById('mkPre').value) || 0;
-            const post = parseFloat(document.getElementById('mkPost').value) || 0;
-            // construir categorias: rangos de marker a marker (cada marker hasta el siguiente del mismo color)
-            const categories = [];
-            chosen.forEach(k => {
-                const arr = readMks.filter(m => String(m.color) === String(k)).sort((a, b) => a.t - b.t);
-                const nm = MK_NAMES[k] || ('COLOR' + k);
-                const ranges = [];
-                for (let i = 0; i < arr.length; i++) {
-                    const s = Math.max(0, arr[i].t - pre);
-                    const e = (i + 1 < arr.length) ? Math.max(s + 0.5, arr[i + 1].t - pre) : (arr[i].t + post);
-                    ranges.push({ s: s, e: e, note: arr[i].name || (nm + ' ' + (i + 1)) });
-                }
-                categories.push({ name: nm, ranges: ranges });
-            });
+            // prioridad: tabla pegada > markers leidos
+            let categories = [];
+            if (pasteCategories && pasteCategories.length) {
+                pasteCategories.forEach(c => categories.push({ name: c.name, ranges: c.ranges.map(rg => ({ s: rg.s, e: rg.e, note: rg.note })) }));
+            } else if (readMks.length) {
+                const chosen = [];
+                document.querySelectorAll('#mkCats input[type=checkbox]').forEach(cb => {
+                    if (cb.checked) chosen.push(cb.dataset.color);
+                });
+                if (!chosen.length) { setStatus('Pega una tabla (📥) o lee markers (📖).', 'err'); return; }
+                const pre = parseFloat(document.getElementById('mkPre').value) || 0;
+                const post = parseFloat(document.getElementById('mkPost').value) || 0;
+                chosen.forEach(k => {
+                    const arr = readMks.filter(m => String(m.color) === String(k)).sort((a, b) => a.t - b.t);
+                    const nm = MK_NAMES[k] || ('COLOR' + k);
+                    const ranges = [];
+                    for (let i = 0; i < arr.length; i++) {
+                        const s = Math.max(0, arr[i].t - pre);
+                        const e = (i + 1 < arr.length) ? Math.max(s + 0.5, arr[i + 1].t - pre) : (arr[i].t + post);
+                        ranges.push({ s: s, e: e, note: arr[i].name || (nm + ' ' + (i + 1)) });
+                    }
+                    categories.push({ name: nm, ranges: ranges });
+                });
+            } else {
+                setStatus('Nada que procesar: pega la tabla (📥) o lee markers (📖).', 'err');
+                return;
+            }
             setBusy(true);
             setStatus('🏷 Creando ' + categories.length + ' secuencia(s) por categoria...');
             cs.evalScript('CN_buildCategoryBatch(' + JSON.stringify(JSON.stringify({ categories: categories })) + ')', (res) => {
