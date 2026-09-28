@@ -545,7 +545,7 @@ function CN_readMarkers() {
     } catch (e) { res.error = e.toString(); return J(res); }
 }
 
-/* construye una secuencia por categoria: clona, recorta por rangos de markers, renombra */
+/* v7.5: batch por categoria — un clon + un extract por categoria (payload simple) */
 function CN_buildCategoryBatch(batchJson) {
     var res = { ok: false, created: 0, seqs: [], errors: [] };
     function err(m) { res.errors.push(String(m)); }
@@ -553,25 +553,27 @@ function CN_buildCategoryBatch(batchJson) {
         var batch = eval("(" + batchJson + ")");
         var cats = batch.categories || [];
         if (!cats.length) { err("Sin categorias"); return J(res); }
-        var zero = getZeroSec(app.project.activeSequence);
+
         for (var c = 0; c < cats.length; c++) {
             var cat = cats[c];
-            // 1) clonar
             var src = app.project.activeSequence;
+            if (!src) { err("No hay secuencia activa"); continue; }
             var cl = null;
             try { cl = src.clone(); } catch (e1) {}
-            if (!cl) { try { cl = app.project.createNewSequenceFromSequence(src.name + " temp", src); } catch (e2) {} }
+            if (!cl) { try { cl = app.project.createNewSequenceFromSequence(src.name + " t", src); } catch (e2) {} }
             if (!cl) { err("No pude clonar para " + cat.name); continue; }
-            cl.name = src.name + "_" + cat.name;
-            // 2) activar y recortar por los rangos de esta categoria
+            var newName = src.name + "_" + cat.name;
+            try { cl.name = newName; } catch (eN) {}
             try { app.project.activeSequence = cl; } catch (eA) {}
+
+            // extract con payload SIMPLE (un solo stringify)
             var payload = { ranges: cat.ranges, rangeMarkers: true };
-            var r = eval("(" + CN_extract(JSON.stringify(JSON.stringify(payload))) + ")");
-            if (r.ok) {
+            var r = eval("(" + CN_extract(JSON.stringify(payload)) + ")");
+            if (r && r.ok) {
                 res.created++;
-                res.seqs.push({ name: cl.name, markers: r.markers, dur: r.dur1 });
+                res.seqs.push({ name: newName, markers: r.markers, dur: r.dur1 });
             } else {
-                err(cl.name + ": " + (r.errors || []).join(" | "));
+                err(newName + ": " + ((r && r.errors) ? r.errors.join(" | ") : "extract sin respuesta"));
             }
         }
         res.ok = res.created > 0;
